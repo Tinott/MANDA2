@@ -1,3 +1,4 @@
+
 import * as pdfjsLib from 'pdfjs-dist';
 import pdfjsWorker from 'pdfjs-dist/build/pdf.worker.mjs?url';
 
@@ -42,6 +43,31 @@ function guessName(snippet, stopWords) {
   const m = snippet.match(/(?:M\.|Mme|Monsieur|Madame|Société|SCI|SARL)\s+([A-ZÀ-Ý][\wÀ-ÿ'’-]+(?:\s+[A-ZÀ-Ý][\wÀ-ÿ'’-]+){0,3})/);
   if (m) return m[0].trim();
   return '';
+}
+
+function findDateNear(text, keywords, windowChars = 300) {
+  const lower = text.toLowerCase();
+  for (const kw of keywords) {
+    let searchFrom = 0;
+    for (let guard = 0; guard < 20; guard += 1) {
+      const idx = lower.indexOf(kw, searchFrom);
+      if (idx === -1) break;
+      const window = text.slice(idx, idx + windowChars);
+      const lit = window.match(DATE_RE);
+      if (lit) {
+        const [, d, moisLit, y] = lit;
+        const mois = MOIS[moisLit.toLowerCase()];
+        return { date: `${y}-${String(mois + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`, confidence: 'haute' };
+      }
+      const num = window.match(DATE_NUM_RE);
+      if (num) {
+        const [, d, m, y] = num;
+        return { date: `${y}-${m}-${d}`, confidence: 'moyenne' };
+      }
+      searchFrom = idx + kw.length;
+    }
+  }
+  return { date: null, confidence: null };
 }
 
 export function parseActeFields(text) {
@@ -98,6 +124,46 @@ export function parseActeFields(text) {
   // Notaire instrumentaire.
   const notaireMatch = text.match(/(?:Maître|Me\.?|M\.)\s+([A-ZÀ-Ý][\wÀ-ÿ'’-]+)[^.]{0,20}?notaire[^.]{0,30}?(?:à|au)\s+([A-ZÀ-Ý][\wÀ-ÿ '’-]{2,30})/i);
   if (notaireMatch) result.notaire = `M ${notaireMatch[1]}, notaire à ${notaireMatch[2].trim()}`;
+
+  return result;
+}
+
+// Promesse / compromis de vente — reprend la base de parseActeFields (prix,
+// parties, adresse, notaire) et ajoute les deux échéances clés que le broker
+// doit suivre : la date limite de levée des conditions suspensives et la
+// date de réitération (signature de l'acte authentique) prévue.
+export function parsePromesseFields(text) {
+  const base = parseActeFields(text);
+  const result = {
+    ...base,
+    dateSignaturePromesse: base.dateSignature,
+    dateLimiteConditionsSuspensives: null,
+    dateReiterationPrevue: null,
+  };
+  delete result.dateSignature;
+
+  const cs = findDateNear(text, [
+    'conditions suspensives seront réputées réalisées au plus tard le',
+    'conditions suspensives devront être réalisées au plus tard le',
+    'réalisation des conditions suspensives',
+    'levée des conditions suspensives',
+    'conditions suspensives',
+    'au plus tard le',
+  ]);
+  result.dateLimiteConditionsSuspensives = cs.date;
+  if (cs.date) result.confidence.dateLimiteConditionsSuspensives = cs.confidence;
+
+  const re = findDateNear(text, [
+    'réitération par acte authentique',
+    'acte authentique sera reçu',
+    'signature de l\u2019acte authentique',
+    'date prévue de signature',
+    'réitération de la vente',
+    'réitération',
+    'acte authentique',
+  ]);
+  result.dateReiterationPrevue = re.date;
+  if (re.date) result.confidence.dateReiterationPrevue = re.confidence;
 
   return result;
 }
