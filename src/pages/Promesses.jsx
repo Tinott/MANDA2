@@ -1,8 +1,9 @@
+
 import { useMemo, useState } from 'react';
-import { Plus, CalendarClock, Pencil, Trash2, AlertTriangle } from 'lucide-react';
+import { Plus, CalendarClock, Pencil, Trash2, AlertTriangle, UploadCloud, Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatEUR, formatDate } from '../lib/calc';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
 
 const STATUTS = ['En cours', 'Conditions levées', 'Réitéré', 'Caduque'];
 
@@ -47,6 +48,7 @@ const EMPTY = {
 export default function Promesses() {
   const { promesses, mandats, removePromesse } = useApp();
   const [editing, setEditing] = useState(null); // null fermé | 'new' | objet
+  const [importOpen, setImportOpen] = useState(false);
 
   const sorted = useMemo(() => {
     const withScore = promesses.map((p) => {
@@ -72,7 +74,12 @@ export default function Promesses() {
         eyebrow="Suivi juridique"
         title="Promesses de vente"
         description="Une fois une promesse signée, suivez ici ses dates butoir — levée des conditions suspensives, réitération prévue — pour ne rien laisser filer."
-        action={<Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouvelle promesse</Button>}
+        action={
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer depuis un document</Button>
+            <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouvelle promesse</Button>
+          </div>
+        }
       />
 
       {alertes.length > 0 && (
@@ -89,8 +96,13 @@ export default function Promesses() {
         <EmptyState
           icon={CalendarClock}
           title="Aucune promesse suivie"
-          description="Dès qu'une promesse ou un compromis est signé, enregistrez-le ici pour suivre ses échéances clés."
-          action={<Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Enregistrer une promesse</Button>}
+          description="Dès qu'une promesse ou un compromis est signé, enregistrez-le ici pour suivre ses échéances clés — manuellement, ou en déposant directement le document."
+          action={
+            <div className="flex gap-3">
+              <Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer un document</Button>
+              <Button variant="outline" onClick={() => setEditing('new')}><Plus size={15} /> Saisir manuellement</Button>
+            </div>
+          }
         />
       ) : (
         <Card padded={false} className="overflow-hidden">
@@ -154,19 +166,98 @@ export default function Promesses() {
       )}
 
       <PromesseEditor open={editing !== null} promesse={editing === 'new' ? null : editing} mandats={mandats} onClose={() => setEditing(null)} />
+      <ImportWizard
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+        onExtracted={(fields) => { setImportOpen(false); setEditing({ ...EMPTY, ...fields }); }}
+      />
     </div>
+  );
+}
+
+// --- Import depuis un document — lecture réelle du PDF (pdf.js) + reconnaissance
+// de motifs, sans IA : le prix, les parties, l'adresse et les deux dates
+// butoir sont extraits automatiquement. Aucune donnée n'est enregistrée
+// avant relecture : l'extraction ouvre directement le formulaire de saisie,
+// pré-rempli, prêt à être corrigé puis enregistré.
+function ImportWizard({ open, onClose, onExtracted }) {
+  const [status, setStatus] = useState('idle');
+  const [fileName, setFileName] = useState('');
+  const [error, setError] = useState('');
+
+  function reset() { setStatus('idle'); setFileName(''); setError(''); }
+  function close() { reset(); onClose(); }
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setStatus('reading');
+    setError('');
+    try {
+      const { extractPdfText, parsePromesseFields } = await import('../lib/pdfExtract');
+      const text = await extractPdfText(file);
+      const fields = parsePromesseFields(text);
+      const notesParts = [];
+      if (fields.notaire) notesParts.push(`Notaire : ${fields.notaire}`);
+      if (fields.reference) notesParts.push(`Référence : ${fields.reference}`);
+      onExtracted({
+        bienAdresse: fields.adresseBien || '',
+        vendeur: fields.vendeur || '',
+        acquereur: fields.acquereur || '',
+        prixVente: fields.prixVente || '',
+        dateSignaturePromesse: fields.dateSignaturePromesse || '',
+        dateLimiteConditionsSuspensives: fields.dateLimiteConditionsSuspensives || '',
+        dateReiterationPrevue: fields.dateReiterationPrevue || '',
+        notes: notesParts.join(' — '),
+      });
+    } catch (err) {
+      setStatus('error');
+      setError("Impossible de lire ce fichier — vérifiez qu'il s'agit bien d'un PDF.");
+    }
+  }
+
+  return (
+    <Modal open={open} onClose={close} title="Importer une promesse depuis un document">
+      <div className="space-y-4">
+        <p className="text-[13px] text-ink-soft">
+          Déposez le PDF de la promesse ou du compromis signé. Le prix, les parties, l'adresse et les
+          dates clés (conditions suspensives, réitération prévue) sont recherchés automatiquement dans
+          le texte — sans IA, sans envoi à un service externe. Le formulaire s'ouvrira pré-rempli pour
+          que vous vérifiiez et corrigiez avant d'enregistrer.
+        </p>
+        <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line rounded-xl py-10 cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
+          {status === 'reading' ? (
+            <>
+              <Loader2 className="animate-spin text-brass" size={26} />
+              <span className="text-[12.5px] text-ink-soft">Lecture du document…</span>
+            </>
+          ) : (
+            <>
+              <UploadCloud className="text-ink-faint" size={26} />
+              <span className="text-[13px] text-ink font-medium">Déposer un PDF ou cliquer pour parcourir</span>
+              <span className="text-[11.5px] text-ink-faint">{fileName || 'Promesse ou compromis de vente signé'}</span>
+            </>
+          )}
+          <input type="file" accept="application/pdf" className="hidden" onChange={handleFile} />
+        </label>
+        {status === 'error' && (
+          <div className="flex items-center gap-2 text-[12.5px] text-rust"><AlertCircle size={14} /> {error}</div>
+        )}
+      </div>
+    </Modal>
   );
 }
 
 function PromesseEditor({ open, promesse, mandats, onClose }) {
   const { addPromesse, updatePromesse } = useApp();
-  const isEdit = Boolean(promesse);
+  const isEdit = Boolean(promesse?.id);
   const [form, setForm] = useState(promesse || EMPTY);
-  const [openedFor, setOpenedFor] = useState(promesse?.id || null);
+  const [openedFor, setOpenedFor] = useState(promesse);
 
-  if (open && (promesse?.id || null) !== openedFor) {
+  if (open && promesse !== openedFor) {
     setForm(promesse || EMPTY);
-    setOpenedFor(promesse?.id || null);
+    setOpenedFor(promesse);
   }
   if (!open) return null;
 
