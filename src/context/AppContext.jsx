@@ -54,6 +54,7 @@ export function AppProvider({ children }) {
   const [kmCumules, setKmCumules] = useState(() => loadState('kmCumules', 0));
   const [lastBackupAt, setLastBackupAt] = useState(() => loadState('lastBackupAt', null));
   const [promesses, setPromesses] = useState(() => loadState('promesses', []));
+  const [contacts, setContacts] = useState(() => loadState('contacts', []));
 
   useEffect(() => saveState('societe', societe), [societe]);
   useEffect(() => saveState('mandats', mandats), [mandats]);
@@ -64,6 +65,7 @@ export function AppProvider({ children }) {
   useEffect(() => saveState('kmCumules', kmCumules), [kmCumules]);
   useEffect(() => saveState('lastBackupAt', lastBackupAt), [lastBackupAt]);
   useEffect(() => saveState('promesses', promesses), [promesses]);
+  useEffect(() => saveState('contacts', contacts), [contacts]);
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
 
@@ -117,6 +119,20 @@ export function AppProvider({ children }) {
       updatePromesse: (id, patch) => setPromesses((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p))),
       removePromesse: (id) => setPromesses((arr) => arr.filter((p) => p.id !== id)),
 
+      contacts,
+      addContact: (c) => {
+        const rec = { id: uid('contact'), createdAt: new Date().toISOString(), ...c };
+        setContacts((arr) => [rec, ...arr]);
+        return rec;
+      },
+      addContactsBulk: (list) => {
+        const recs = list.map((c) => ({ id: uid('contact'), createdAt: new Date().toISOString(), ...c }));
+        setContacts((arr) => [...recs, ...arr]);
+        return recs;
+      },
+      updateContact: (id, patch) => setContacts((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
+      removeContact: (id) => setContacts((arr) => arr.filter((c) => c.id !== id)),
+
       users,
       addUser: (u) => setUsers((arr) => [...arr, { id: uid('user'), role: 'agent', ...u }]),
       removeUser: (id) => setUsers((arr) => arr.filter((u) => u.id !== id)),
@@ -132,7 +148,7 @@ export function AppProvider({ children }) {
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
-        const at = downloadSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses });
+        const at = downloadSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts });
         setLastBackupAt(at);
         return at;
       },
@@ -147,6 +163,7 @@ export function AppProvider({ children }) {
         setUsers(data.users || []);
         setKmCumules(data.kmCumules || 0);
         setPromesses(data.promesses || []);
+        setContacts(data.contacts || []);
         return data;
       },
       exportSynthese: async () => {
@@ -154,7 +171,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
