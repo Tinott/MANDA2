@@ -4,6 +4,7 @@ import Sidebar from './components/Sidebar';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Mandats from './pages/Mandats';
+import Contacts from './pages/Contacts';
 import Facturation from './pages/Facturation';
 import NotesFrais from './pages/NotesFrais';
 import Comptabilite from './pages/Comptabilite';
@@ -23,6 +24,7 @@ function Shell() {
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/mandats" element={<Mandats />} />
+          <Route path="/contacts" element={<Contacts />} />
           <Route path="/facturation" element={<Facturation />} />
           <Route path="/frais" element={<NotesFrais />} />
           <Route path="/comptabilite" element={<Comptabilite />} />
