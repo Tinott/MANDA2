@@ -1,13 +1,14 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutGrid, FileText, Receipt, BookOpen, Wallet, CalendarClock,
-  FileStack, BarChart3, Settings, Building2,
+  FileStack, BarChart3, Settings, Building2, Users,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
 const NAV = [
   { to: '/', label: 'Tableau de bord', icon: LayoutGrid, end: true },
   { to: '/mandats', label: 'Mandats & biens', icon: Building2 },
+  { to: '/contacts', label: 'Contacts', icon: Users },
   { to: '/facturation', label: 'Facturation', icon: FileText },
   { to: '/frais', label: 'Notes de frais', icon: Receipt },
   { to: '/comptabilite', label: 'Comptabilité', icon: BookOpen },
