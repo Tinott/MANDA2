@@ -6,7 +6,7 @@
 
 const SNAPSHOT_VERSION = 1;
 
-export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses }) {
+export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts }) {
   return {
     app: 'mandat',
     version: SNAPSHOT_VERSION,
@@ -19,6 +19,7 @@ export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers
     users,
     kmCumules,
     promesses,
+    contacts,
   };
 }
 
