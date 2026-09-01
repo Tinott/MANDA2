@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { FileStack, Sparkles, Download, UploadCloud, Loader2, Plus } from 'lucide-react';
+import { FileStack, Sparkles, Download, UploadCloud, Loader2, Plus, ImagePlus, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatEUR } from '../lib/calc';
 import { PageHeader, Card, Button, Field, Input, Select, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
@@ -27,7 +27,8 @@ export default function IM() {
       loyerAnnuel: m.loyerAnnuel, dpe: m.dpe, description: m.description || '', charges: '',
       situationLocative: '', reference: '', locataire: '', dureeBail: '3/6/9', indexation: '',
       dateEffetBail: '', activiteLocataire: '', tripleNet: m.typeMandat === 'Location',
-      prixRecommande: '', modaliteVente: '', honorairesPct: '',
+      prixRecommande: '', modaliteVente: '', honorairesPct: '', environnement: '',
+      photoPrincipale: '', photoComposition: '', photoSituation: '',
     });
     setMandatId(m.id);
     setStep(1);
@@ -54,8 +55,20 @@ export default function IM() {
     }
   }
 
+  async function handlePhoto(field, e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const { fileToResizedDataUrl } = await import('../lib/image');
+    const dataUrl = await fileToResizedDataUrl(file, 1600, 0.85);
+    setBien((b) => ({ ...b, [field]: dataUrl }));
+  }
+
   function finish() {
-    addDossier({ type: 'IM', nom: `IM — ${bien.adresse}`, bien, statut: 'Diffusé' });
+    // La bibliothèque garde une trace du document (nom, statut) mais pas les
+    // photos elles-mêmes — déjà présentes dans le .pptx téléchargé, elles
+    // n'ont pas besoin d'être dupliquées dans le stockage local.
+    const { photoPrincipale, photoComposition, photoSituation, ...bienLeger } = bien;
+    addDossier({ type: 'IM', nom: `IM — ${bien.adresse}`, bien: bienLeger, statut: 'Diffusé' });
     setStep(3);
   }
 
@@ -134,6 +147,23 @@ export default function IM() {
                 </Field>
 
                 <div className="pt-2 border-t border-line-soft">
+                  <div className="text-[12px] font-medium text-ink mt-4 mb-1">Visuels</div>
+                  <p className="text-[11.5px] text-ink-faint mb-3">
+                    Une présentation sans photo se voit tout de suite — ajoutez au moins la photo principale.
+                  </p>
+                  <div className="grid grid-cols-3 gap-3">
+                    <PhotoField label="Photo principale" hint="Couverture" value={bien.photoPrincipale} onChange={(e) => handlePhoto('photoPrincipale', e)} onClear={() => setBien({ ...bien, photoPrincipale: '' })} />
+                    <PhotoField label="Carte / emplacement" hint="Capture Maps" value={bien.photoSituation} onChange={(e) => handlePhoto('photoSituation', e)} onClear={() => setBien({ ...bien, photoSituation: '' })} />
+                    <PhotoField label="Plan / façade" hint="Composition" value={bien.photoComposition} onChange={(e) => handlePhoto('photoComposition', e)} onClear={() => setBien({ ...bien, photoComposition: '' })} />
+                  </div>
+                  {bien.photoSituation && (
+                    <Field label="Présentation de l'emplacement" hint="Texte affiché à côté de la carte">
+                      <Textarea value={bien.environnement} onChange={(e) => setBien({ ...bien, environnement: e.target.value })} placeholder="Accessibilité, bassin économique, environnement immédiat…" />
+                    </Field>
+                  )}
+                </div>
+
+                <div className="pt-2 border-t border-line-soft">
                   <div className="text-[12px] font-medium text-ink mt-4 mb-3">Conditions financières du bail</div>
                   <div className="grid grid-cols-2 gap-4">
                     <Field label="Locataire en place"><Input value={bien.locataire} onChange={(e) => setBien({ ...bien, locataire: e.target.value })} placeholder="Nom de l'enseigne" /></Field>
@@ -194,6 +224,32 @@ export default function IM() {
             )}
           </Card>
         </div>
+      )}
+    </div>
+  );
+}
+
+function PhotoField({ label, hint, value, onChange, onClear }) {
+  return (
+    <div>
+      <div className="text-[11.5px] font-medium text-ink mb-1">{label}</div>
+      {value ? (
+        <div className="relative rounded-lg overflow-hidden border border-line h-20">
+          <img src={value} alt={label} className="w-full h-full object-cover" />
+          <button
+            type="button"
+            onClick={onClear}
+            className="absolute top-1 right-1 h-5 w-5 rounded-full bg-ink/70 text-white flex items-center justify-center hover:bg-rust"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ) : (
+        <label className="flex flex-col items-center justify-center gap-1 h-20 rounded-lg border-2 border-dashed border-line cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
+          <ImagePlus size={16} className="text-ink-faint" />
+          <span className="text-[10px] text-ink-faint">{hint}</span>
+          <input type="file" accept="image/*" className="hidden" onChange={onChange} />
+        </label>
       )}
     </div>
   );
