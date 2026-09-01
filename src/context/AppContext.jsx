@@ -27,6 +27,7 @@ const DEFAULT_SOCIETE = {
   contactNom: '',
   telephone: '',
   email: '',
+  photoContact: '',
   soldeTresorerieInitial: 0,
   remunerationGerantAnnuelle: 24000,
   chargesSocialesAnnuelle: 18000,
