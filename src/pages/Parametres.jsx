@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react';
-import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Check } from 'lucide-react';
+import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Check, Camera, X } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { clearAll } from '../lib/storage';
 import { formatDate } from '../lib/calc';
@@ -39,7 +39,12 @@ export default function Parametres() {
         <Card>
           <div className="flex items-center gap-2 mb-4"><Building2 size={16} className="text-brass" /><h3 className="font-display text-[16px] text-ink">Société</h3></div>
           <form onSubmit={save} className="space-y-4">
-            <Field label="Raison sociale"><Input value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} /></Field>
+            <div className="flex items-center gap-4">
+              <ProfilePhotoField value={form.photoContact} onChange={(dataUrl) => setForm({ ...form, photoContact: dataUrl })} />
+              <div className="flex-1">
+                <Field label="Raison sociale"><Input value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} /></Field>
+              </div>
+            </div>
             <div className="grid grid-cols-2 gap-4">
               <Field label="SIRET"><Input value={form.siret} onChange={(e) => setForm({ ...form, siret: e.target.value })} /></Field>
               <Field label="Capital social"><Input type="number" value={form.capitalSocial} onChange={(e) => setForm({ ...form, capitalSocial: e.target.value })} /></Field>
@@ -262,6 +267,37 @@ function BackupCard({ lastBackupAt, exportSnapshot, importSnapshot, exportSynthe
         utilisez « Restaurer depuis un fichier ».
       </p>
     </Card>
+  );
+}
+
+function ProfilePhotoField({ value, onChange }) {
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const { fileToResizedDataUrl } = await import('../lib/image');
+    const dataUrl = await fileToResizedDataUrl(file, 500, 0.85);
+    onChange(dataUrl);
+  }
+  return (
+    <div className="relative shrink-0">
+      {value ? (
+        <div className="relative h-16 w-16 rounded-full overflow-hidden border border-line">
+          <img src={value} alt="Photo de profil" className="h-full w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute -top-0.5 -right-0.5 h-5 w-5 rounded-full bg-ink/70 text-white flex items-center justify-center hover:bg-rust"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ) : (
+        <label className="flex flex-col items-center justify-center gap-0.5 h-16 w-16 rounded-full border-2 border-dashed border-line cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
+          <Camera size={16} className="text-ink-faint" />
+          <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        </label>
+      )}
+    </div>
   );
 }
 
