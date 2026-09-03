@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutGrid, FileText, Receipt, BookOpen, Wallet, CalendarClock,
-  FileStack, BarChart3, Settings, Building2, Users,
+  FileStack, BarChart3, Settings, Building2, Users, Trash2,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -55,6 +55,17 @@ export default function Sidebar() {
       </nav>
 
       <div className="px-3 pb-4">
+        <NavLink
+          to="/corbeille"
+          className={({ isActive }) =>
+            `flex items-center gap-3 rounded-lg px-3 py-2.5 text-[13.5px] transition-colors ${
+              isActive ? 'bg-white/10 text-white font-medium' : 'text-white/60 hover:text-white hover:bg-white/5'
+            }`
+          }
+        >
+          <Trash2 size={16} strokeWidth={1.75} />
+          Corbeille
+        </NavLink>
         <NavLink
           to="/parametres"
           className={({ isActive }) =>
