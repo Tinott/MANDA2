@@ -12,6 +12,7 @@ import Tresorerie from './pages/Tresorerie';
 import IM from './pages/IM';
 import Promesses from './pages/Promesses';
 import Reporting from './pages/Reporting';
+import Corbeille from './pages/Corbeille';
 import Parametres from './pages/Parametres';
 
 function Shell() {
@@ -32,6 +33,7 @@ function Shell() {
           <Route path="/im" element={<IM />} />
           <Route path="/promesses" element={<Promesses />} />
           <Route path="/rapports" element={<Reporting />} />
+          <Route path="/corbeille" element={<Corbeille />} />
           <Route path="/parametres" element={<Parametres />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
