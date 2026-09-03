@@ -1,3 +1,4 @@
+
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { loadState, saveState, uid } from '../lib/storage';
 import { buildRegistre } from '../lib/calc';
@@ -45,6 +46,10 @@ const DEFAULT_SOCIETE = {
   },
 };
 
+// Types d'éléments passant par la corbeille, et vers quel tableau ils
+// retournent lors d'une restauration.
+const TRASH_TYPES = ['mandat', 'facture', 'frais', 'promesse', 'contact'];
+
 export function AppProvider({ children }) {
   const [societe, setSocieteState] = useState(() => loadState('societe', DEFAULT_SOCIETE));
   const [mandats, setMandats] = useState(() => loadState('mandats', []));
@@ -56,6 +61,7 @@ export function AppProvider({ children }) {
   const [lastBackupAt, setLastBackupAt] = useState(() => loadState('lastBackupAt', null));
   const [promesses, setPromesses] = useState(() => loadState('promesses', []));
   const [contacts, setContacts] = useState(() => loadState('contacts', []));
+  const [trash, setTrash] = useState(() => loadState('trash', []));
 
   useEffect(() => saveState('societe', societe), [societe]);
   useEffect(() => saveState('mandats', mandats), [mandats]);
@@ -67,8 +73,22 @@ export function AppProvider({ children }) {
   useEffect(() => saveState('lastBackupAt', lastBackupAt), [lastBackupAt]);
   useEffect(() => saveState('promesses', promesses), [promesses]);
   useEffect(() => saveState('contacts', contacts), [contacts]);
+  useEffect(() => saveState('trash', trash), [trash]);
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
+
+  // Suppression réversible — utilisée par tous les modules (mandats,
+  // factures, notes de frais, promesses, contacts) : rien n'est perdu
+  // immédiatement, l'élément part dans la corbeille avec toutes ses
+  // données, restaurable à l'identique depuis la page Corbeille.
+  function softDelete(type, list, setList, id) {
+    const item = list.find((x) => x.id === id);
+    if (!item) return;
+    setTrash((t) => [{ id: uid('trash'), type, data: item, deletedAt: new Date().toISOString() }, ...t]);
+    setList((arr) => arr.filter((x) => x.id !== id));
+  }
+
+  const setterByType = { mandat: setMandats, facture: setFactures, frais: setNotesFrais, promesse: setPromesses, contact: setContacts };
 
   const value = useMemo(
     () => ({
@@ -83,7 +103,7 @@ export function AppProvider({ children }) {
         return rec;
       },
       updateMandat: (id, patch) => setMandats((arr) => arr.map((m) => (m.id === id ? { ...m, ...patch } : m))),
-      removeMandat: (id) => setMandats((arr) => arr.filter((m) => m.id !== id)),
+      removeMandat: (id) => softDelete('mandat', mandats, setMandats, id),
 
       factures,
       addFacture: (f) => {
@@ -92,7 +112,7 @@ export function AppProvider({ children }) {
         return rec;
       },
       updateFacture: (id, patch) => setFactures((arr) => arr.map((f) => (f.id === id ? { ...f, ...patch } : f))),
-      removeFacture: (id) => setFactures((arr) => arr.filter((f) => f.id !== id)),
+      removeFacture: (id) => softDelete('facture', factures, setFactures, id),
 
       notesFrais,
       addNoteFrais: (n) => {
@@ -101,7 +121,7 @@ export function AppProvider({ children }) {
         return rec;
       },
       updateNoteFrais: (id, patch) => setNotesFrais((arr) => arr.map((n) => (n.id === id ? { ...n, ...patch } : n))),
-      removeNoteFrais: (id) => setNotesFrais((arr) => arr.filter((n) => n.id !== id)),
+      removeNoteFrais: (id) => softDelete('frais', notesFrais, setNotesFrais, id),
 
       dossiers,
       addDossier: (d) => {
@@ -118,7 +138,7 @@ export function AppProvider({ children }) {
         return rec;
       },
       updatePromesse: (id, patch) => setPromesses((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p))),
-      removePromesse: (id) => setPromesses((arr) => arr.filter((p) => p.id !== id)),
+      removePromesse: (id) => softDelete('promesse', promesses, setPromesses, id),
 
       contacts,
       addContact: (c) => {
@@ -132,7 +152,7 @@ export function AppProvider({ children }) {
         return recs;
       },
       updateContact: (id, patch) => setContacts((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
-      removeContact: (id) => setContacts((arr) => arr.filter((c) => c.id !== id)),
+      removeContact: (id) => softDelete('contact', contacts, setContacts, id),
 
       users,
       addUser: (u) => setUsers((arr) => [...arr, { id: uid('user'), role: 'agent', ...u }]),
@@ -144,12 +164,25 @@ export function AppProvider({ children }) {
 
       registre,
 
+      // Corbeille — restauration ou suppression définitive d'un élément
+      // supprimé depuis n'importe quel module.
+      trash,
+      restoreFromTrash: (trashId) => {
+        const entry = trash.find((t) => t.id === trashId);
+        if (!entry) return;
+        const setter = setterByType[entry.type];
+        if (setter) setter((arr) => [entry.data, ...arr]);
+        setTrash((t) => t.filter((x) => x.id !== trashId));
+      },
+      permanentlyDelete: (trashId) => setTrash((t) => t.filter((x) => x.id !== trashId)),
+      emptyTrash: () => setTrash([]),
+
       // Sauvegarde & transfert — voir Paramètres. Tout est en local ;
       // ces fonctions donnent une trace exportable/restaurable.
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
-        const at = downloadSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts });
+        const at = downloadSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, trash });
         setLastBackupAt(at);
         return at;
       },
@@ -165,6 +198,7 @@ export function AppProvider({ children }) {
         setKmCumules(data.kmCumules || 0);
         setPromesses(data.promesses || []);
         setContacts(data.contacts || []);
+        setTrash(data.trash || []);
         return data;
       },
       exportSynthese: async () => {
@@ -172,7 +206,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, trash]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
