@@ -1,3 +1,4 @@
+
 // Sauvegarde & transfert de compte — l'application stocke tout en local
 // (localStorage du navigateur) : rien ne quitte l'appareil, mais rien ne
 // survit non plus à un cache vidé ou à un changement d'ordinateur. Ce module
@@ -6,7 +7,7 @@
 
 const SNAPSHOT_VERSION = 1;
 
-export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, trash }) {
+export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash }) {
   return {
     app: 'mandat',
     version: SNAPSHOT_VERSION,
@@ -20,6 +21,8 @@ export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers
     kmCumules,
     promesses,
     contacts,
+    prospects,
+    courriers,
     trash,
   };
 }
