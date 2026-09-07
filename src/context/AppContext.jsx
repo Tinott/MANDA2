@@ -46,10 +46,6 @@ const DEFAULT_SOCIETE = {
   },
 };
 
-// Types d'éléments passant par la corbeille, et vers quel tableau ils
-// retournent lors d'une restauration.
-const TRASH_TYPES = ['mandat', 'facture', 'frais', 'promesse', 'contact'];
-
 export function AppProvider({ children }) {
   const [societe, setSocieteState] = useState(() => loadState('societe', DEFAULT_SOCIETE));
   const [mandats, setMandats] = useState(() => loadState('mandats', []));
@@ -61,6 +57,8 @@ export function AppProvider({ children }) {
   const [lastBackupAt, setLastBackupAt] = useState(() => loadState('lastBackupAt', null));
   const [promesses, setPromesses] = useState(() => loadState('promesses', []));
   const [contacts, setContacts] = useState(() => loadState('contacts', []));
+  const [prospects, setProspects] = useState(() => loadState('prospects', []));
+  const [courriers, setCourriers] = useState(() => loadState('courriers', []));
   const [trash, setTrash] = useState(() => loadState('trash', []));
 
   useEffect(() => saveState('societe', societe), [societe]);
@@ -73,13 +71,14 @@ export function AppProvider({ children }) {
   useEffect(() => saveState('lastBackupAt', lastBackupAt), [lastBackupAt]);
   useEffect(() => saveState('promesses', promesses), [promesses]);
   useEffect(() => saveState('contacts', contacts), [contacts]);
+  useEffect(() => saveState('prospects', prospects), [prospects]);
+  useEffect(() => saveState('courriers', courriers), [courriers]);
   useEffect(() => saveState('trash', trash), [trash]);
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
 
-  // Suppression réversible — utilisée par tous les modules (mandats,
-  // factures, notes de frais, promesses, contacts) : rien n'est perdu
-  // immédiatement, l'élément part dans la corbeille avec toutes ses
+  // Suppression réversible — utilisée par tous les modules : rien n'est
+  // perdu immédiatement, l'élément part dans la corbeille avec toutes ses
   // données, restaurable à l'identique depuis la page Corbeille.
   function softDelete(type, list, setList, id) {
     const item = list.find((x) => x.id === id);
@@ -88,7 +87,10 @@ export function AppProvider({ children }) {
     setList((arr) => arr.filter((x) => x.id !== id));
   }
 
-  const setterByType = { mandat: setMandats, facture: setFactures, frais: setNotesFrais, promesse: setPromesses, contact: setContacts };
+  const setterByType = {
+    mandat: setMandats, facture: setFactures, frais: setNotesFrais,
+    promesse: setPromesses, contact: setContacts, prospect: setProspects, courrier: setCourriers,
+  };
 
   const value = useMemo(
     () => ({
@@ -154,6 +156,36 @@ export function AppProvider({ children }) {
       updateContact: (id, patch) => setContacts((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
       removeContact: (id) => softDelete('contact', contacts, setContacts, id),
 
+      // Pipeline commercial — suivi des prospects investisseurs et des
+      // courriers/mails de prospection, rattachables à un dossier (mandat).
+      prospects,
+      addProspect: (p) => {
+        const rec = { id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p };
+        setProspects((arr) => [rec, ...arr]);
+        return rec;
+      },
+      addProspectsBulk: (list) => {
+        const recs = list.map((p) => ({ id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p }));
+        setProspects((arr) => [...recs, ...arr]);
+        return recs;
+      },
+      updateProspect: (id, patch) => setProspects((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+      removeProspect: (id) => softDelete('prospect', prospects, setProspects, id),
+
+      courriers,
+      addCourrier: (c) => {
+        const rec = { id: uid('courrier'), createdAt: new Date().toISOString(), statut: 'Envoyé', ...c };
+        setCourriers((arr) => [rec, ...arr]);
+        return rec;
+      },
+      addCourriersBulk: (list) => {
+        const recs = list.map((c) => ({ id: uid('courrier'), createdAt: new Date().toISOString(), statut: 'Envoyé', ...c }));
+        setCourriers((arr) => [...recs, ...arr]);
+        return recs;
+      },
+      updateCourrier: (id, patch) => setCourriers((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
+      removeCourrier: (id) => softDelete('courrier', courriers, setCourriers, id),
+
       users,
       addUser: (u) => setUsers((arr) => [...arr, { id: uid('user'), role: 'agent', ...u }]),
       removeUser: (id) => setUsers((arr) => arr.filter((u) => u.id !== id)),
@@ -182,7 +214,10 @@ export function AppProvider({ children }) {
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
-        const at = downloadSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, trash });
+        const at = downloadSnapshot({
+          societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
+          promesses, contacts, prospects, courriers, trash,
+        });
         setLastBackupAt(at);
         return at;
       },
@@ -198,6 +233,8 @@ export function AppProvider({ children }) {
         setKmCumules(data.kmCumules || 0);
         setPromesses(data.promesses || []);
         setContacts(data.contacts || []);
+        setProspects(data.prospects || []);
+        setCourriers(data.courriers || []);
         setTrash(data.trash || []);
         return data;
       },
@@ -206,7 +243,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, trash]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, prospects, courriers, trash]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
