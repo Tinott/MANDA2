@@ -5,6 +5,7 @@ import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Mandats from './pages/Mandats';
 import Contacts from './pages/Contacts';
+import Suivi from './pages/Suivi';
 import Facturation from './pages/Facturation';
 import NotesFrais from './pages/NotesFrais';
 import Comptabilite from './pages/Comptabilite';
@@ -26,6 +27,7 @@ function Shell() {
           <Route path="/" element={<Dashboard />} />
           <Route path="/mandats" element={<Mandats />} />
           <Route path="/contacts" element={<Contacts />} />
+          <Route path="/suivi" element={<Suivi />} />
           <Route path="/facturation" element={<Facturation />} />
           <Route path="/frais" element={<NotesFrais />} />
           <Route path="/comptabilite" element={<Comptabilite />} />
