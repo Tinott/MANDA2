@@ -10,6 +10,8 @@ const TYPE_LABEL = {
   frais: 'Note de frais',
   promesse: 'Promesse de vente',
   contact: 'Contact',
+  prospect: 'Prospect',
+  courrier: 'Courrier / mail',
 };
 
 const TYPE_TONE = {
@@ -18,6 +20,8 @@ const TYPE_TONE = {
   frais: 'default',
   promesse: 'rust',
   contact: 'default',
+  prospect: 'brass',
+  courrier: 'default',
 };
 
 function describe(entry) {
@@ -33,6 +37,10 @@ function describe(entry) {
       return { title: d.bienAdresse || 'Promesse de vente', sub: [d.vendeur, d.acquereur].filter(Boolean).join(' → ') };
     case 'contact':
       return { title: d.societe || [d.prenom, d.nom].filter(Boolean).join(' ') || 'Contact', sub: d.email || d.telephone || '' };
+    case 'prospect':
+      return { title: d.prospect || 'Prospect', sub: [d.type, d.statut].filter(Boolean).join(' · ') };
+    case 'courrier':
+      return { title: d.societe || d.nomContact || 'Courrier', sub: [d.typeAction, d.statut].filter(Boolean).join(' · ') };
     default:
       return { title: 'Élément', sub: '' };
   }
