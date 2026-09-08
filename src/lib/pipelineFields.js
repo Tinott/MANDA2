@@ -1,5 +1,7 @@
+
 export const PROSPECT_FIELDS = [
   { id: 'ignorer', label: 'Ignorer' },
+  { id: 'dossier', label: 'Dossier (classé automatiquement)' },
   { id: 'prospect', label: 'Prospect / Société' },
   { id: 'contact', label: 'Contact' },
   { id: 'type', label: 'Type' },
@@ -18,6 +20,7 @@ export const PROSPECT_FIELDS = [
 ];
 
 export const PROSPECT_SYNONYMS = {
+  dossier: ['dossier', 'nom du dossier'],
   prospect: ['prospect societe', 'prospect', 'societe'],
   contact: ['contact'],
   type: ['type'],
@@ -37,6 +40,7 @@ export const PROSPECT_SYNONYMS = {
 
 export const COURRIER_FIELDS = [
   { id: 'ignorer', label: 'Ignorer' },
+  { id: 'dossier', label: 'Dossier (classé automatiquement)' },
   { id: 'dateEnvoi', label: "Date d'envoi" },
   { id: 'typeAction', label: "Type d'action" },
   { id: 'typeContact', label: 'Type de contact' },
@@ -56,6 +60,7 @@ export const COURRIER_FIELDS = [
 ];
 
 export const COURRIER_SYNONYMS = {
+  dossier: ['dossier', 'nom du dossier'],
   dateEnvoi: ['date d envoi', 'date envoi'],
   typeAction: ['type d action', 'type action'],
   typeContact: ['type de contact', 'type contact'],
