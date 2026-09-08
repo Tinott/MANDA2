@@ -3,7 +3,7 @@ import { Plus, Receipt, Camera, Loader2, Sparkles, Trash2, Pencil, Car, CheckCir
 import { useApp } from '../context/AppContext';
 import { calcIndemniteKm, cvBracket, DEPENSE_CATEGORIES } from '../lib/seed';
 import { formatEUR, formatDate, tvaMontant } from '../lib/calc';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Badge, EmptyState, Stepper, Stamp } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Badge, EmptyState, Stepper, Stamp, BulkDeleteButton } from '../components/ui';
 
 export default function NotesFrais() {
   const { notesFrais, removeNoteFrais } = useApp();
@@ -21,6 +21,7 @@ export default function NotesFrais() {
         description="Photographiez un justificatif ou calculez une indemnité kilométrique — tout s'ajoute automatiquement à la comptabilité."
         action={
           <div className="flex gap-2">
+            <BulkDeleteButton type="frais" items={notesFrais} label="dépense" />
             <Button variant="outline" onClick={() => setKmOpen(true)}><Car size={15} /> Frais kilométriques</Button>
             <Button variant="brass" onClick={() => setCaptureOpen(true)}><Camera size={15} /> Photographier un ticket</Button>
           </div>
