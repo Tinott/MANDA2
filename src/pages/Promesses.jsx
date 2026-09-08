@@ -3,7 +3,7 @@ import { useMemo, useState } from 'react';
 import { Plus, CalendarClock, Pencil, Trash2, AlertTriangle, UploadCloud, Loader2, Sparkles, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatEUR, formatDate } from '../lib/calc';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, Stepper, BulkDeleteButton } from '../components/ui';
 
 const STATUTS = ['En cours', 'Conditions levées', 'Réitéré', 'Caduque'];
 
@@ -76,6 +76,7 @@ export default function Promesses() {
         description="Une fois une promesse signée, suivez ici ses dates butoir — levée des conditions suspensives, réitération prévue — pour ne rien laisser filer."
         action={
           <div className="flex gap-2">
+            <BulkDeleteButton type="promesse" items={sorted} label="promesse" />
             <Button variant="outline" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer depuis un document</Button>
             <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouvelle promesse</Button>
           </div>
