@@ -1,15 +1,15 @@
 import { useMemo, useState } from 'react';
 import {
   Plus, Pencil, Trash2, UploadCloud, Loader2, AlertCircle, CheckCircle2,
-  ChevronDown, ChevronRight, TrendingUp, Mail, Flame, Handshake, Users2,
+  ChevronDown, ChevronRight, TrendingUp, Mail, Flame, Handshake, Users2, FolderPlus, X,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatEUR, formatDate } from '../lib/calc';
+import { formatDate } from '../lib/calc';
 import {
   PROSPECT_FIELDS, PROSPECT_SYNONYMS, PROSPECT_STATUTS, PROSPECT_INTERETS, PROSPECT_TYPES,
   COURRIER_FIELDS, COURRIER_SYNONYMS, COURRIER_STATUTS, COURRIER_TYPES_CONTACT, COURRIER_TYPES_ACTION,
 } from '../lib/pipelineFields';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, BulkDeleteButton } from '../components/ui';
 
 function daysUntil(dateStr) {
   if (!dateStr) return null;
@@ -26,29 +26,83 @@ function deadlineTone(dateStr, resolved) {
   return 'default';
 }
 
+// Un "dossier" de classement peut être un mandat existant OU un classeur
+// libre créé à la volée, sans jamais nécessiter de mandat. Les deux sont
+// fusionnés ici en une seule liste d'options pour le filtrage et la saisie.
+function useDossierOptions() {
+  const { mandats, dossiers, addDossier, removeDossier } = useApp();
+  const libres = useMemo(() => dossiers.filter((d) => d.type === 'libre'), [dossiers]);
+
+  const options = useMemo(
+    () => [
+      ...mandats.map((m) => ({ id: m.id, label: m.adresse || 'Mandat sans adresse', source: 'mandat' })),
+      ...libres.map((d) => ({ id: d.id, label: d.nom, source: 'libre' })),
+    ],
+    [mandats, libres]
+  );
+
+  const labelFor = (id) => options.find((o) => o.id === id)?.label || null;
+  const createDossierLibre = (nom, description) => addDossier({ type: 'libre', nom, description, statut: 'Ouvert' });
+  const deleteDossierLibre = (id) => removeDossier(id);
+
+  return { options, libres, labelFor, createDossierLibre, deleteDossierLibre };
+}
+
 export default function Suivi() {
-  const { mandats, prospects, courriers } = useApp();
+  const { prospects, courriers } = useApp();
   const [tab, setTab] = useState('prospects');
   const [dossierFilter, setDossierFilter] = useState('');
-
-  const dossierLabel = (id) => mandats.find((m) => m.id === id)?.adresse || null;
+  const [newDossierOpen, setNewDossierOpen] = useState(false);
+  const { options, libres, labelFor, createDossierLibre, deleteDossierLibre } = useDossierOptions();
 
   return (
     <div>
       <PageHeader
         eyebrow="Pipeline commercial"
         title="Suivi commercial"
-        description="Prospects investisseurs et courriers de prospection, dossier par dossier — importables depuis vos tableaux Excel existants."
-        action={
-          mandats.length > 0 && (
-            <Select value={dossierFilter} onChange={(e) => setDossierFilter(e.target.value)} className="w-auto min-w-[220px]">
-              <option value="">Tous les dossiers</option>
-              {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse || 'Mandat sans adresse'}</option>)}
-              <option value="__none__">Sans dossier associé</option>
-            </Select>
-          )
-        }
+        description="Prospects investisseurs et courriers de prospection, classés par dossier — un dossier peut être un mandat, ou un simple classeur libre sans mandat associé."
       />
+
+      <div className="flex flex-wrap items-center gap-2 mb-5">
+        <button
+          onClick={() => setDossierFilter('')}
+          className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${!dossierFilter ? 'bg-ink text-white border-ink' : 'bg-surface text-ink-soft border-line hover:bg-paper'}`}
+        >
+          Tous les dossiers
+        </button>
+        {options.map((o) => (
+          <div key={o.id} className="relative group">
+            <button
+              onClick={() => setDossierFilter(o.id)}
+              className={`pl-3 pr-2.5 py-1.5 rounded-full text-[12px] font-medium border transition-colors flex items-center gap-1.5 ${dossierFilter === o.id ? 'bg-ink text-white border-ink' : 'bg-surface text-ink-soft border-line hover:bg-paper'}`}
+            >
+              {o.source === 'libre' && <FolderPlus size={11} className="opacity-60" />}
+              {o.label}
+            </button>
+            {o.source === 'libre' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); deleteDossierLibre(o.id); if (dossierFilter === o.id) setDossierFilter(''); }}
+                className="absolute -top-1.5 -right-1.5 h-4 w-4 rounded-full bg-rust text-white items-center justify-center hidden group-hover:flex"
+                title="Supprimer ce dossier"
+              >
+                <X size={9} />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          onClick={() => setDossierFilter('__none__')}
+          className={`px-3 py-1.5 rounded-full text-[12px] font-medium border transition-colors ${dossierFilter === '__none__' ? 'bg-ink text-white border-ink' : 'bg-surface text-ink-soft border-line hover:bg-paper'}`}
+        >
+          Sans dossier
+        </button>
+        <button
+          onClick={() => setNewDossierOpen(true)}
+          className="px-3 py-1.5 rounded-full text-[12px] font-medium border border-dashed border-brass/50 text-brass-deep hover:bg-brass-soft/40 transition-colors flex items-center gap-1.5"
+        >
+          <Plus size={12} /> Nouveau dossier
+        </button>
+      </div>
 
       <div className="flex gap-1 mb-6 border border-line rounded-lg p-1 bg-surface w-fit">
         <button
@@ -66,29 +120,65 @@ export default function Suivi() {
       </div>
 
       {tab === 'prospects'
-        ? <ProspectsTab dossierFilter={dossierFilter} mandats={mandats} dossierLabel={dossierLabel} />
-        : <CourriersTab dossierFilter={dossierFilter} mandats={mandats} dossierLabel={dossierLabel} />}
+        ? <ProspectsTab dossierFilter={dossierFilter} dossierOptions={options} dossierLabel={labelFor} createDossierLibre={createDossierLibre} />
+        : <CourriersTab dossierFilter={dossierFilter} dossierOptions={options} dossierLabel={labelFor} createDossierLibre={createDossierLibre} />}
+
+      <NewDossierModal open={newDossierOpen} onClose={() => setNewDossierOpen(false)} onCreate={createDossierLibre} />
     </div>
+  );
+}
+
+function NewDossierModal({ open, onClose, onCreate }) {
+  const [nom, setNom] = useState('');
+  const [description, setDescription] = useState('');
+  if (!open) return null;
+
+  function submit(e) {
+    e.preventDefault();
+    if (!nom.trim()) return;
+    onCreate(nom.trim(), description.trim());
+    setNom(''); setDescription(''); onClose();
+  }
+
+  return (
+    <Modal open={open} onClose={onClose} title="Nouveau dossier">
+      <form onSubmit={submit} className="space-y-4">
+        <p className="text-[12.5px] text-ink-soft">
+          Un dossier libre — pas besoin d'un mandat signé. Utile pour une campagne de prospection sur un
+          secteur, une recherche off-market, ou tout classement qui n'a pas encore (ou n'aura jamais) de mandat.
+        </p>
+        <Field label="Nom du dossier" required>
+          <Input value={nom} onChange={(e) => setNom(e.target.value)} placeholder="Ex. Prospection ZA Les Palettes, Aubagne" autoFocus />
+        </Field>
+        <Field label="Description" hint="Optionnel">
+          <Textarea value={description} onChange={(e) => setDescription(e.target.value)} />
+        </Field>
+        <div className="flex justify-end gap-3 pt-2">
+          <Button type="button" variant="ghost" onClick={onClose}>Annuler</Button>
+          <Button type="submit" variant="brass">Créer le dossier</Button>
+        </div>
+      </form>
+    </Modal>
   );
 }
 
 // ============================= PROSPECTS ==================================
 
 const PROSPECT_EMPTY = {
-  mandatId: '', prospect: '', contact: '', type: '', broker: '', dateEnvoi: '', versionEnvoyee: '',
+  dossierId: '', prospect: '', contact: '', type: '', broker: '', dateEnvoi: '', versionEnvoyee: '',
   statut: 'À contacter', niveauInteret: '', dernierEchange: '', prochaineRelance: '', retour: '',
   prixPropose: '', rendementPropose: '', documentsDemandes: '', prochaineAction: '',
 };
 
-function ProspectsTab({ dossierFilter, mandats, dossierLabel }) {
+function ProspectsTab({ dossierFilter, dossierOptions, dossierLabel, createDossierLibre }) {
   const { prospects, removeProspect, addProspectsBulk } = useApp();
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
 
   const filtered = useMemo(() => {
     if (!dossierFilter) return prospects;
-    if (dossierFilter === '__none__') return prospects.filter((p) => !p.mandatId);
-    return prospects.filter((p) => p.mandatId === dossierFilter);
+    if (dossierFilter === '__none__') return prospects.filter((p) => !p.dossierId);
+    return prospects.filter((p) => p.dossierId === dossierFilter);
   }, [prospects, dossierFilter]);
 
   const kpis = useMemo(() => ({
@@ -110,6 +200,7 @@ function ProspectsTab({ dossierFilter, mandats, dossierLabel }) {
       </div>
 
       <div className="flex justify-end gap-2 mb-4">
+        <BulkDeleteButton type="prospect" items={filtered} label="prospect" />
         <Button variant="outline" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>
         <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouveau prospect</Button>
       </div>
@@ -140,7 +231,7 @@ function ProspectsTab({ dossierFilter, mandats, dossierLabel }) {
                 <tr key={p.id} className="hover:bg-paper-raised/60">
                   <td className="px-5 py-3 text-ink max-w-[180px]">
                     <div className="truncate font-medium">{p.prospect || '—'}</div>
-                    {p.mandatId && dossierLabel(p.mandatId) && <div className="text-[11px] text-ink-faint truncate">{dossierLabel(p.mandatId)}</div>}
+                    {p.dossierId && dossierLabel(p.dossierId) && <div className="text-[11px] text-ink-faint truncate">{dossierLabel(p.dossierId)}</div>}
                   </td>
                   <td className="px-5 py-3 text-ink-soft max-w-[150px] truncate">{p.contact || '—'}</td>
                   <td className="px-5 py-3 text-ink-soft">{p.type && <Badge>{p.type}</Badge>}</td>
@@ -162,13 +253,14 @@ function ProspectsTab({ dossierFilter, mandats, dossierLabel }) {
         </Card>
       )}
 
-      <ProspectEditor open={editing !== null} prospect={editing === 'new' ? null : editing} mandats={mandats} onClose={() => setEditing(null)} />
+      <ProspectEditor open={editing !== null} prospect={editing === 'new' ? null : editing} dossierOptions={dossierOptions} onClose={() => setEditing(null)} />
       <PipelineImportWizard
         open={importOpen}
         onClose={() => setImportOpen(false)}
         synonyms={PROSPECT_SYNONYMS}
         targetFields={PROSPECT_FIELDS}
-        mandats={mandats}
+        dossierOptions={dossierOptions}
+        createDossierLibre={createDossierLibre}
         onImport={addProspectsBulk}
         title="Importer des prospects depuis Excel"
       />
@@ -176,7 +268,7 @@ function ProspectsTab({ dossierFilter, mandats, dossierLabel }) {
   );
 }
 
-function ProspectEditor({ open, prospect, mandats, onClose }) {
+function ProspectEditor({ open, prospect, dossierOptions, onClose }) {
   const { addProspect, updateProspect } = useApp();
   const isEdit = Boolean(prospect?.id);
   const [form, setForm] = useState(prospect || PROSPECT_EMPTY);
@@ -200,11 +292,11 @@ function ProspectEditor({ open, prospect, mandats, onClose }) {
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Modifier le prospect' : 'Nouveau prospect'} width="max-w-xl">
       <form onSubmit={submit} className="space-y-4">
-        {mandats.length > 0 && (
-          <Field label="Dossier" hint="Optionnel">
-            <Select value={form.mandatId} onChange={set('mandatId')}>
+        {dossierOptions.length > 0 && (
+          <Field label="Dossier" hint="Mandat ou dossier libre — optionnel">
+            <Select value={form.dossierId} onChange={set('dossierId')}>
               <option value="">Aucun</option>
-              {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse || 'Mandat sans adresse'}</option>)}
+              {dossierOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </Select>
           </Field>
         )}
@@ -261,20 +353,20 @@ function ProspectEditor({ open, prospect, mandats, onClose }) {
 // ============================= COURRIERS ===================================
 
 const COURRIER_EMPTY = {
-  mandatId: '', dateEnvoi: '', typeAction: 'Email', typeContact: '', societe: '', nomContact: '', fonction: '',
+  dossierId: '', dateEnvoi: '', typeAction: 'Email', typeContact: '', societe: '', nomContact: '', fonction: '',
   telephone: '', email: '', bienSecteur: '', objet: '', statut: 'Envoyé', dateRelancePrevue: '',
   nbRelances: '', reponseObtenue: '', prochaineAction: '', chargeDossier: '',
 };
 
-function CourriersTab({ dossierFilter, mandats, dossierLabel }) {
+function CourriersTab({ dossierFilter, dossierOptions, dossierLabel, createDossierLibre }) {
   const { courriers, removeCourrier, addCourriersBulk } = useApp();
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
 
   const filtered = useMemo(() => {
     if (!dossierFilter) return courriers;
-    if (dossierFilter === '__none__') return courriers.filter((c) => !c.mandatId);
-    return courriers.filter((c) => c.mandatId === dossierFilter);
+    if (dossierFilter === '__none__') return courriers.filter((c) => !c.dossierId);
+    return courriers.filter((c) => c.dossierId === dossierFilter);
   }, [courriers, dossierFilter]);
 
   const kpis = useMemo(() => {
@@ -296,6 +388,7 @@ function CourriersTab({ dossierFilter, mandats, dossierLabel }) {
       </div>
 
       <div className="flex justify-end gap-2 mb-4">
+        <BulkDeleteButton type="courrier" items={filtered} label="courrier" />
         <Button variant="outline" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>
         <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouveau courrier</Button>
       </div>
@@ -352,13 +445,14 @@ function CourriersTab({ dossierFilter, mandats, dossierLabel }) {
         </Card>
       )}
 
-      <CourrierEditor open={editing !== null} courrier={editing === 'new' ? null : editing} mandats={mandats} onClose={() => setEditing(null)} />
+      <CourrierEditor open={editing !== null} courrier={editing === 'new' ? null : editing} dossierOptions={dossierOptions} onClose={() => setEditing(null)} />
       <PipelineImportWizard
         open={importOpen}
         onClose={() => setImportOpen(false)}
         synonyms={COURRIER_SYNONYMS}
         targetFields={COURRIER_FIELDS}
-        mandats={mandats}
+        dossierOptions={dossierOptions}
+        createDossierLibre={createDossierLibre}
         onImport={addCourriersBulk}
         title="Importer des courriers depuis Excel"
       />
@@ -366,7 +460,7 @@ function CourriersTab({ dossierFilter, mandats, dossierLabel }) {
   );
 }
 
-function CourrierEditor({ open, courrier, mandats, onClose }) {
+function CourrierEditor({ open, courrier, dossierOptions, onClose }) {
   const { addCourrier, updateCourrier } = useApp();
   const isEdit = Boolean(courrier?.id);
   const [form, setForm] = useState(courrier || COURRIER_EMPTY);
@@ -390,11 +484,11 @@ function CourrierEditor({ open, courrier, mandats, onClose }) {
   return (
     <Modal open={open} onClose={onClose} title={isEdit ? 'Modifier le courrier' : 'Nouveau courrier'} width="max-w-xl">
       <form onSubmit={submit} className="space-y-4">
-        {mandats.length > 0 && (
-          <Field label="Dossier" hint="Optionnel">
-            <Select value={form.mandatId} onChange={set('mandatId')}>
+        {dossierOptions.length > 0 && (
+          <Field label="Dossier" hint="Mandat ou dossier libre — optionnel">
+            <Select value={form.dossierId} onChange={set('dossierId')}>
               <option value="">Aucun</option>
-              {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse || 'Mandat sans adresse'}</option>)}
+              {dossierOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
             </Select>
           </Field>
         )}
@@ -465,18 +559,18 @@ function KpiBox({ label, value, icon: Icon, tone = 'default' }) {
 // Assistant d'import générique — lecture réelle du classeur (SheetJS),
 // mappage de colonnes deviné puis vérifié par l'utilisateur avant tout
 // enregistrement, comme pour l'import Contacts.
-function PipelineImportWizard({ open, onClose, synonyms, targetFields, mandats, onImport, title }) {
+function PipelineImportWizard({ open, onClose, synonyms, targetFields, dossierOptions, createDossierLibre, onImport, title }) {
   const [status, setStatus] = useState('idle');
   const [sheets, setSheets] = useState([]);
   const [mappings, setMappings] = useState({});
   const [included, setIncluded] = useState({});
   const [openSheets, setOpenSheets] = useState({});
-  const [mandatId, setMandatId] = useState('');
+  const [dossierId, setDossierId] = useState('');
   const [error, setError] = useState('');
   const [importedCount, setImportedCount] = useState(0);
 
   function reset() {
-    setStatus('idle'); setSheets([]); setMappings({}); setIncluded({}); setOpenSheets({}); setMandatId(''); setError(''); setImportedCount(0);
+    setStatus('idle'); setSheets([]); setMappings({}); setIncluded({}); setOpenSheets({}); setDossierId(''); setError(''); setImportedCount(0);
   }
   function close() { reset(); onClose(); }
 
@@ -527,10 +621,30 @@ function PipelineImportWizard({ open, onClose, synonyms, targetFields, mandats, 
 
   async function confirmImport() {
     const { buildRecordsFromMapping } = await import('../lib/pipelineImport');
-    const extraFields = mandatId ? { mandatId } : {};
-    const all = sheets
+    const extraFields = dossierId ? { dossierId } : {};
+    const raw = sheets
       .filter((s) => included[s.name])
       .flatMap((s) => buildRecordsFromMapping(s, mappings[s.name], extraFields));
+
+    // Classification automatique : si une colonne a été mappée vers
+    // "Dossier", chaque ligne rejoint le dossier correspondant à sa valeur
+    // — retrouvé s'il existe déjà (mandat ou dossier libre), sinon créé à
+    // la volée. Les lignes déjà rattachées via le sélecteur ci-dessus ne
+    // sont écrasées que si leur propre colonne "Dossier" est renseignée.
+    const nameToId = new Map(dossierOptions.map((o) => [o.label.trim().toLowerCase(), o.id]));
+    const all = raw.map((rec) => {
+      if (!rec.dossier || !rec.dossier.trim()) return rec;
+      const key = rec.dossier.trim().toLowerCase();
+      let id = nameToId.get(key);
+      if (!id) {
+        const created = createDossierLibre(rec.dossier.trim(), '');
+        id = created.id;
+        nameToId.set(key, id);
+      }
+      const { dossier, ...rest } = rec;
+      return { ...rest, dossierId: id };
+    });
+
     onImport(all);
     setImportedCount(all.length);
     setStatus('done');
@@ -559,13 +673,15 @@ function PipelineImportWizard({ open, onClose, synonyms, targetFields, mandats, 
           <p className="text-[12.5px] text-ink-soft">
             {sheets.length} onglet{sheets.length > 1 ? 's' : ''} détecté{sheets.length > 1 ? 's' : ''}. Corrigez
             le mappage si besoin, décochez un onglet à ne pas importer (les onglets de listes déroulantes ou de
-            tableau de bord, par exemple).
+            tableau de bord, par exemple). Astuce : mappez une colonne vers <strong>« Dossier »</strong> (ex.
+            « Bien / Secteur concerné ») pour que chaque ligne rejoigne automatiquement le bon dossier —
+            créé à la volée s'il n'existe pas encore.
           </p>
-          {mandats.length > 0 && (
-            <Field label="Rattacher les lignes importées à un dossier" hint="Optionnel — vous pourrez le préciser ligne par ligne ensuite">
-              <Select value={mandatId} onChange={(e) => setMandatId(e.target.value)}>
+          {dossierOptions.length > 0 && (
+            <Field label="Rattacher les lignes importées à un dossier" hint="Optionnel — mandat ou dossier libre, vous pourrez le préciser ligne par ligne ensuite">
+              <Select value={dossierId} onChange={(e) => setDossierId(e.target.value)}>
                 <option value="">Aucun dossier par défaut</option>
-                {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse || 'Mandat sans adresse'}</option>)}
+                {dossierOptions.map((o) => <option key={o.id} value={o.id}>{o.label}</option>)}
               </Select>
             </Field>
           )}
@@ -621,7 +737,7 @@ function PipelineImportWizard({ open, onClose, synonyms, targetFields, mandats, 
         <div className="text-center py-6">
           <CheckCircle2 className="mx-auto text-teal mb-3" size={30} strokeWidth={1.5} />
           <div className="font-display text-[19px] text-ink">{importedCount} ligne{importedCount > 1 ? 's' : ''} importée{importedCount > 1 ? 's' : ''}</div>
-          <p className="text-ink-soft text-[13px] mt-1.5">Modifiables, supprimables (avec récupération via la corbeille) comme n'importe quelle ligne saisie à la main.</p>
+          <p className="text-ink-soft text-[13px] mt-1.5">Modifiables, supprimables (avec récupération immédiate) comme n'importe quelle ligne saisie à la main.</p>
           <div className="flex justify-center mt-6"><Button variant="brass" onClick={close}>Terminer</Button></div>
         </div>
       )}
