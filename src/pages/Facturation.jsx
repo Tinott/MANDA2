@@ -1,10 +1,11 @@
+
 import { useState } from 'react';
 import { Plus, FileText, Sparkles, Download, Trash2, Pencil, UploadCloud, Loader2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { calcHonoraires, repartitionRedevable, tvaMontant, nextInvoiceNumber, clientNumero, formatEUR, formatDate } from '../lib/calc';
 import { uid } from '../lib/storage';
 import {
-  PageHeader, Card, Button, Modal, Field, Input, Select, Badge, statusTone, EmptyState, Stepper, Stamp,
+  PageHeader, Card, Button, Modal, Field, Input, Select, Badge, statusTone, EmptyState, Stepper, Stamp, BulkDeleteButton,
 } from '../components/ui';
 
 const STATUTS = ['Brouillon', 'Émise', 'Envoyée', 'Payée', 'En retard'];
@@ -27,6 +28,7 @@ export default function Facturation() {
         description="Générez vos honoraires à partir d'un acte, ou créez une facture manuellement. Tout reste modifiable après coup."
         action={
           <div className="flex gap-2">
+            <BulkDeleteButton type="facture" items={factures} label="facture" />
             <Button variant="outline" onClick={() => setEditorState('new')}><Plus size={15} /> Facture manuelle</Button>
             <Button variant="brass" onClick={() => setWizardOpen(true)}><Sparkles size={15} /> Générer depuis un acte</Button>
           </div>
