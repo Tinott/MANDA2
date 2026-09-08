@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { loadState, saveState, uid } from '../lib/storage';
 import { buildRegistre } from '../lib/calc';
 import { ROLES } from '../lib/seed';
+import { trashEntryLabel } from '../lib/trashLabels';
 
 const AppCtx = createContext(null);
 
@@ -60,6 +61,7 @@ export function AppProvider({ children }) {
   const [prospects, setProspects] = useState(() => loadState('prospects', []));
   const [courriers, setCourriers] = useState(() => loadState('courriers', []));
   const [trash, setTrash] = useState(() => loadState('trash', []));
+  const [toast, setToast] = useState(null); // { trashIds: string[], label } — éphémère, non persisté
 
   useEffect(() => saveState('societe', societe), [societe]);
   useEffect(() => saveState('mandats', mandats), [mandats]);
@@ -79,17 +81,39 @@ export function AppProvider({ children }) {
 
   // Suppression réversible — utilisée par tous les modules : rien n'est
   // perdu immédiatement, l'élément part dans la corbeille avec toutes ses
-  // données, restaurable à l'identique depuis la page Corbeille.
+  // données. Un toast "Annuler" apparaît aussitôt (voir UndoToast) et reste
+  // affiché indéfiniment (jusqu'à fermeture ou action suivante) — la
+  // Corbeille reste de toute façon disponible sans limite de temps.
   function softDelete(type, list, setList, id) {
     const item = list.find((x) => x.id === id);
     if (!item) return;
-    setTrash((t) => [{ id: uid('trash'), type, data: item, deletedAt: new Date().toISOString() }, ...t]);
+    const trashId = uid('trash');
+    setTrash((t) => [{ id: trashId, type, data: item, deletedAt: new Date().toISOString() }, ...t]);
     setList((arr) => arr.filter((x) => x.id !== id));
+    setToast({ trashIds: [trashId], label: trashEntryLabel(type, item) });
   }
 
+  // Suppression groupée — "Tout supprimer" sur une section (respecte les
+  // filtres déjà appliqués côté page). Chaque élément part individuellement
+  // en corbeille ; un seul toast permet de tout restaurer d'un coup.
+  function softDeleteMany(type, list, setList, ids) {
+    const idSet = new Set(ids);
+    const items = list.filter((x) => idSet.has(x.id));
+    if (!items.length) return;
+    const entries = items.map((item) => ({ id: uid('trash'), type, data: item, deletedAt: new Date().toISOString() }));
+    setTrash((t) => [...entries, ...t]);
+    setList((arr) => arr.filter((x) => !idSet.has(x.id)));
+    setToast({ trashIds: entries.map((e) => e.id), label: `${items.length} élément${items.length > 1 ? 's' : ''}` });
+  }
+
+  const listByType = {
+    mandat: mandats, facture: factures, frais: notesFrais, promesse: promesses,
+    contact: contacts, prospect: prospects, courrier: courriers, dossier: dossiers,
+  };
   const setterByType = {
     mandat: setMandats, facture: setFactures, frais: setNotesFrais,
-    promesse: setPromesses, contact: setContacts, prospect: setProspects, courrier: setCourriers,
+    promesse: setPromesses, contact: setContacts, prospect: setProspects,
+    courrier: setCourriers, dossier: setDossiers,
   };
 
   const value = useMemo(
@@ -125,6 +149,10 @@ export function AppProvider({ children }) {
       updateNoteFrais: (id, patch) => setNotesFrais((arr) => arr.map((n) => (n.id === id ? { ...n, ...patch } : n))),
       removeNoteFrais: (id) => softDelete('frais', notesFrais, setNotesFrais, id),
 
+      // Dossiers — classeurs libres, indépendants d'un mandat. Un mandat
+      // reste utilisable comme dossier de classement (voir Suivi commercial),
+      // mais un dossier peut aussi exister seul, pour un travail de
+      // prospection qui n'a pas encore (ou n'aura jamais) de mandat signé.
       dossiers,
       addDossier: (d) => {
         const rec = { id: uid('dossier'), createdAt: new Date().toISOString(), fichiers: [], partages: [], ...d };
@@ -132,6 +160,7 @@ export function AppProvider({ children }) {
         return rec;
       },
       updateDossier: (id, patch) => setDossiers((arr) => arr.map((d) => (d.id === id ? { ...d, ...patch } : d))),
+      removeDossier: (id) => softDelete('dossier', dossiers, setDossiers, id),
 
       promesses,
       addPromesse: (p) => {
@@ -157,7 +186,7 @@ export function AppProvider({ children }) {
       removeContact: (id) => softDelete('contact', contacts, setContacts, id),
 
       // Pipeline commercial — suivi des prospects investisseurs et des
-      // courriers/mails de prospection, rattachables à un dossier (mandat).
+      // courriers/mails de prospection, rattachables à un dossier libre.
       prospects,
       addProspect: (p) => {
         const rec = { id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p };
@@ -196,6 +225,10 @@ export function AppProvider({ children }) {
 
       registre,
 
+      // "Tout supprimer" sur une section — type + liste d'ids à supprimer
+      // (la page appelante passe déjà la liste filtrée/affichée).
+      removeMany: (type, ids) => softDeleteMany(type, listByType[type], setterByType[type], ids),
+
       // Corbeille — restauration ou suppression définitive d'un élément
       // supprimé depuis n'importe quel module.
       trash,
@@ -205,9 +238,27 @@ export function AppProvider({ children }) {
         const setter = setterByType[entry.type];
         if (setter) setter((arr) => [entry.data, ...arr]);
         setTrash((t) => t.filter((x) => x.id !== trashId));
+        setToast((cur) => (cur?.trashIds?.includes(trashId) ? null : cur));
+      },
+      restoreMany: (trashIds) => {
+        const idSet = new Set(trashIds);
+        const entries = trash.filter((t) => idSet.has(t.id));
+        const byType = {};
+        entries.forEach((e) => { (byType[e.type] ||= []).push(e.data); });
+        Object.entries(byType).forEach(([type, items]) => {
+          const setter = setterByType[type];
+          if (setter) setter((arr) => [...items, ...arr]);
+        });
+        setTrash((t) => t.filter((x) => !idSet.has(x.id)));
+        setToast((cur) => (cur?.trashIds?.some((id) => idSet.has(id)) ? null : cur));
       },
       permanentlyDelete: (trashId) => setTrash((t) => t.filter((x) => x.id !== trashId)),
       emptyTrash: () => setTrash([]),
+
+      // Toast d'annulation — affiché juste après toute suppression, partout
+      // dans l'app, jusqu'à fermeture manuelle ou suppression suivante.
+      toast,
+      dismissToast: () => setToast(null),
 
       // Sauvegarde & transfert — voir Paramètres. Tout est en local ;
       // ces fonctions donnent une trace exportable/restaurable.
@@ -243,7 +294,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, prospects, courriers, trash]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, prospects, courriers, trash, toast]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
