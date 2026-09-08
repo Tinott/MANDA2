@@ -1,4 +1,28 @@
-import { X, Check, ChevronRight } from 'lucide-react';
+
+import { X, Check, ChevronRight, Trash2 } from 'lucide-react';
+import { useApp } from '../context/AppContext';
+
+// Bouton "Tout supprimer" générique — supprime (de façon réversible) tous
+// les éléments de la liste passée, tels qu'affichés à l'écran (filtres
+// déjà appliqués côté page appelante). Un seul clic + une confirmation.
+export function BulkDeleteButton({ type, items, label, size = 'md' }) {
+  const { removeMany } = useApp();
+  if (!items || items.length === 0) return null;
+  const noun = label || 'élément';
+  return (
+    <Button
+      variant="danger"
+      size={size}
+      onClick={() => {
+        if (confirm(`Supprimer les ${items.length} ${noun}${items.length > 1 ? 's' : ''} affiché${items.length > 1 ? 's' : ''} ? Ils resteront récupérables (Annuler, ou Corbeille).`)) {
+          removeMany(type, items.map((x) => x.id));
+        }
+      }}
+    >
+      <Trash2 size={14} /> Tout supprimer
+    </Button>
+  );
+}
 
 export function PageHeader({ eyebrow, title, action, description }) {
   return (
