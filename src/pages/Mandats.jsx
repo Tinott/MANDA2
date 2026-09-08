@@ -1,9 +1,10 @@
+
 import { useState } from 'react';
 import { Plus, Building2, MapPin, Trash2, Pencil, Search } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatEUR, formatDate } from '../lib/calc';
 import { MANDAT_TYPES } from '../lib/seed';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, statusTone, EmptyState } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, statusTone, EmptyState, BulkDeleteButton } from '../components/ui';
 
 const EMPTY = {
   adresse: '', typeBien: '', typeMandat: 'Vente', client: '', prixVente: '', loyerAnnuel: '',
@@ -22,7 +23,12 @@ export default function Mandats() {
         eyebrow="Portefeuille"
         title="Mandats & biens"
         description="Vente, location, gestion, ou recherche pour le compte d'un acquéreur seul — chaque mandat reste modifiable à tout moment."
-        action={<Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouveau mandat</Button>}
+        action={
+          <div className="flex gap-2">
+            <BulkDeleteButton type="mandat" items={mandats} label="mandat" />
+            <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouveau mandat</Button>
+          </div>
+        }
       />
 
       {mandats.length === 0 ? (
