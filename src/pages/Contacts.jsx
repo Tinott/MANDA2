@@ -1,10 +1,11 @@
+
 import { useMemo, useState } from 'react';
 import {
   Plus, Users, Search, Pencil, Trash2, Mail, Phone, MapPin, UploadCloud,
   Loader2, AlertCircle, CheckCircle2, ChevronDown, ChevronRight,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, BulkDeleteButton } from '../components/ui';
 
 const EMPTY = { societe: '', nom: '', prenom: '', email: '', telephone: '', adresse: '', categorie: '', notes: '' };
 const TONES = ['brass', 'teal', 'rust', 'default'];
@@ -92,8 +93,11 @@ export default function Contacts() {
             )}
           </div>
 
-          <div className="text-[12px] text-ink-faint mb-3">
-            {filtered.length} contact{filtered.length > 1 ? 's' : ''}{query || activeTag ? ` sur ${contacts.length}` : ''}
+          <div className="flex items-center justify-between mb-3">
+            <div className="text-[12px] text-ink-faint">
+              {filtered.length} contact{filtered.length > 1 ? 's' : ''}{query || activeTag ? ` sur ${contacts.length}` : ''}
+            </div>
+            <BulkDeleteButton type="contact" items={filtered} label="contact" size="sm" />
           </div>
 
           {filtered.length === 0 ? (
