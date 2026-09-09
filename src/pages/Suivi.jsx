@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import {
   Plus, Pencil, Trash2, UploadCloud, Loader2, AlertCircle, CheckCircle2,
-  ChevronDown, ChevronRight, TrendingUp, Mail, Flame, Handshake, Users2, FolderPlus, X,
+  ChevronDown, ChevronRight, TrendingUp, Mail, Flame, Handshake, Users2, FolderPlus, X, Search,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatDate } from '../lib/calc';
@@ -10,6 +10,10 @@ import {
   COURRIER_FIELDS, COURRIER_SYNONYMS, COURRIER_STATUTS, COURRIER_TYPES_CONTACT, COURRIER_TYPES_ACTION,
 } from '../lib/pipelineFields';
 import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, BulkDeleteButton } from '../components/ui';
+
+function normalize(s) {
+  return String(s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+}
 
 function daysUntil(dateStr) {
   if (!dateStr) return null;
@@ -174,12 +178,21 @@ function ProspectsTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
   const { prospects, removeProspect, addProspectsBulk } = useApp();
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
-    if (!dossierFilter) return prospects;
-    if (dossierFilter === '__none__') return prospects.filter((p) => !p.dossierId);
-    return prospects.filter((p) => p.dossierId === dossierFilter);
-  }, [prospects, dossierFilter]);
+    let list = prospects;
+    if (dossierFilter === '__none__') list = list.filter((p) => !p.dossierId);
+    else if (dossierFilter) list = list.filter((p) => p.dossierId === dossierFilter);
+    const q = normalize(query.trim());
+    if (!q) return list;
+    return list.filter((p) => {
+      const haystack = normalize(
+        [p.prospect, p.contact, p.type, p.broker, p.statut, p.niveauInteret, p.retour, p.prochaineAction, p.documentsDemandes].join(' ')
+      );
+      return haystack.includes(q);
+    });
+  }, [prospects, dossierFilter, query]);
 
   const kpis = useMemo(() => ({
     total: filtered.length,
@@ -191,6 +204,16 @@ function ProspectsTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
 
   return (
     <div>
+      <div className="relative mb-4">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher un prospect, un contact, un statut, une note…"
+          className="pl-9"
+        />
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-5">
         <KpiBox label="Prospects" value={kpis.total} icon={Users2} />
         <KpiBox label="Retours / intéressés" value={kpis.retours} icon={TrendingUp} />
@@ -207,10 +230,10 @@ function ProspectsTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
 
       {filtered.length === 0 ? (
         <EmptyState
-          icon={TrendingUp}
-          title="Aucun prospect enregistré"
-          description="Ajoutez vos prospects investisseurs un par un, ou importez d'un coup votre tableau de suivi Excel."
-          action={<Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>}
+          icon={prospects.length > 0 ? Search : TrendingUp}
+          title={prospects.length > 0 ? 'Aucun résultat' : 'Aucun prospect enregistré'}
+          description={prospects.length > 0 ? 'Essayez un autre terme, ou changez de dossier.' : "Ajoutez vos prospects investisseurs un par un, ou importez d'un coup votre tableau de suivi Excel."}
+          action={prospects.length === 0 && <Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>}
         />
       ) : (
         <Card padded={false} className="overflow-hidden">
@@ -362,12 +385,21 @@ function CourriersTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
   const { courriers, removeCourrier, addCourriersBulk } = useApp();
   const [editing, setEditing] = useState(null);
   const [importOpen, setImportOpen] = useState(false);
+  const [query, setQuery] = useState('');
 
   const filtered = useMemo(() => {
-    if (!dossierFilter) return courriers;
-    if (dossierFilter === '__none__') return courriers.filter((c) => !c.dossierId);
-    return courriers.filter((c) => c.dossierId === dossierFilter);
-  }, [courriers, dossierFilter]);
+    let list = courriers;
+    if (dossierFilter === '__none__') list = list.filter((c) => !c.dossierId);
+    else if (dossierFilter) list = list.filter((c) => c.dossierId === dossierFilter);
+    const q = normalize(query.trim());
+    if (!q) return list;
+    return list.filter((c) => {
+      const haystack = normalize(
+        [c.societe, c.nomContact, c.fonction, c.telephone, c.email, c.bienSecteur, c.objet, c.statut, c.reponseObtenue, c.prochaineAction, c.chargeDossier].join(' ')
+      );
+      return haystack.includes(q);
+    });
+  }, [courriers, dossierFilter, query]);
 
   const kpis = useMemo(() => {
     const total = filtered.length;
@@ -380,6 +412,16 @@ function CourriersTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
 
   return (
     <div>
+      <div className="relative mb-4">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-ink-faint" />
+        <Input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Rechercher une société, un contact, un objet, un statut…"
+          className="pl-9"
+        />
+      </div>
+
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-5">
         <KpiBox label="Envois enregistrés" value={kpis.total} icon={Mail} />
         <KpiBox label="Réponses obtenues" value={kpis.reponses} icon={CheckCircle2} tone="teal" />
@@ -395,10 +437,10 @@ function CourriersTab({ dossierFilter, dossierOptions, dossierLabel, createDossi
 
       {filtered.length === 0 ? (
         <EmptyState
-          icon={Mail}
-          title="Aucun courrier enregistré"
-          description="Ajoutez vos envois un par un, ou importez d'un coup votre tableau de suivi Excel."
-          action={<Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>}
+          icon={courriers.length > 0 ? Search : Mail}
+          title={courriers.length > 0 ? 'Aucun résultat' : 'Aucun courrier enregistré'}
+          description={courriers.length > 0 ? 'Essayez un autre terme, ou changez de dossier.' : "Ajoutez vos envois un par un, ou importez d'un coup votre tableau de suivi Excel."}
+          action={courriers.length === 0 && <Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer Excel</Button>}
         />
       ) : (
         <Card padded={false} className="overflow-hidden">
