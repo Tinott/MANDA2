@@ -1,3 +1,4 @@
+
 export const TRASH_TYPE_LABEL = {
   mandat: 'Mandat',
   facture: 'Facture',
@@ -7,6 +8,7 @@ export const TRASH_TYPE_LABEL = {
   prospect: 'Prospect',
   courrier: 'Courrier / mail',
   dossier: 'Dossier',
+  document: 'Document juridique',
 };
 
 export const TRASH_TYPE_TONE = {
@@ -18,10 +20,9 @@ export const TRASH_TYPE_TONE = {
   prospect: 'brass',
   courrier: 'default',
   dossier: 'teal',
+  document: 'brass',
 };
 
-// Titre + sous-titre lisibles pour un élément de la corbeille — utilisé
-// dans la liste complète (Corbeille) comme dans le toast d'annulation.
 export function describeTrashEntry(type, d) {
   switch (type) {
     case 'mandat':
@@ -40,12 +41,13 @@ export function describeTrashEntry(type, d) {
       return { title: d.societe || d.nomContact || 'Courrier', sub: [d.typeAction, d.statut].filter(Boolean).join(' · ') };
     case 'dossier':
       return { title: d.nom || 'Dossier', sub: d.type === 'IM' ? 'Memorandum' : 'Dossier de classement' };
+    case 'document':
+      return { title: d.numero ? `${d.numero}` : (d.type || 'Document'), sub: d.statut || '' };
     default:
       return { title: 'Élément', sub: '' };
   }
 }
 
-// Version courte, pour le toast ("Contact « Julien Vasseur » supprimé").
 export function trashEntryLabel(type, d) {
   const { title } = describeTrashEntry(type, d);
   const typeLabel = TRASH_TYPE_LABEL[type] || 'Élément';
