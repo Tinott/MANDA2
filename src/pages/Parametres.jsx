@@ -1,6 +1,7 @@
 import { useState, useRef } from 'react';
-import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Check, Camera, X } from 'lucide-react';
+import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Cloud, Check, Camera, X, LogOut } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { useAuth } from '../context/AuthContext';
 import { clearAll } from '../lib/storage';
 import { formatDate } from '../lib/calc';
 import { PageHeader, Card, Button, Field, Input, Select, Badge } from '../components/ui';
@@ -35,6 +36,7 @@ export default function Parametres() {
 
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="space-y-5">
+        <AccountCard />
         <BackupCard lastBackupAt={lastBackupAt} exportSnapshot={exportSnapshot} importSnapshot={importSnapshot} exportSynthese={exportSynthese} />
         <Card>
           <div className="flex items-center gap-2 mb-4"><Building2 size={16} className="text-brass" /><h3 className="font-display text-[16px] text-ink">Société</h3></div>
@@ -95,7 +97,7 @@ export default function Parametres() {
           </form>
         </Card>
 
-        <Card  >
+        <Card>
           <div className="flex items-center gap-2 mb-4"><Landmark size={16} className="text-brass" /><h3 className="font-display text-[16px] text-ink">Charges de structure annuelles</h3></div>
           <p className="text-[12px] text-ink-soft mb-3">
             Utilisées pour construire le compte de résultat (valeur ajoutée, EBE, résultat d'exploitation) — proratisées sur la période choisie en Comptabilité.
@@ -171,10 +173,88 @@ export default function Parametres() {
   );
 }
 
+function ProfilePhotoField({ value, onChange }) {
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const { fileToResizedDataUrl } = await import('../lib/image');
+    const dataUrl = await fileToResizedDataUrl(file, 500, 0.85);
+    onChange(dataUrl);
+  }
+  return (
+    <div className="relative shrink-0">
+      {value ? (
+        <div className="relative h-16 w-16 rounded-full overflow-hidden border border-line">
+          <img src={value} alt="Photo de profil" className="h-full w-full object-cover" />
+          <button
+            type="button"
+            onClick={() => onChange('')}
+            className="absolute -top-0.5 -right-0.5 h-5 w-5 rounded-full bg-ink/70 text-white flex items-center justify-center hover:bg-rust"
+          >
+            <X size={11} />
+          </button>
+        </div>
+      ) : (
+        <label className="flex flex-col items-center justify-center gap-0.5 h-16 w-16 rounded-full border-2 border-dashed border-line cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
+          <Camera size={16} className="text-ink-faint" />
+          <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
+        </label>
+      )}
+    </div>
+  );
+}
+
+function UserAdder({ onAdd, roles }) {
+  const [form, setForm] = useState({ nom: '', email: '', role: 'agent' });
+  function submit(e) {
+    e.preventDefault();
+    if (!form.nom) return;
+    onAdd(form);
+    setForm({ nom: '', email: '', role: 'agent' });
+  }
+  return (
+    <form onSubmit={submit} className="flex flex-wrap gap-2">
+      <Input placeholder="Nom" value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} className="flex-1 min-w-[120px] !py-2" />
+      <Input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="flex-1 min-w-[140px] !py-2" />
+      <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-auto !py-2">
+        {roles.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
+      </Select>
+      <Button type="submit" variant="outline" size="sm"><Plus size={14} /> Ajouter</Button>
+    </form>
+  );
+}
+
+function AccountCard() {
+  const { cloudStatus } = useApp();
+  const { session, orgName, signOut } = useAuth();
+
+  return (
+    <Card className="border-teal/25">
+      <div className="flex items-center gap-2 mb-2">
+        <Cloud size={16} className="text-teal" />
+        <h3 className="font-display text-[16px] text-ink">Organisation & compte</h3>
+        {cloudStatus === 'syncing' && <span className="text-[11px] text-ink-faint ml-auto">Synchronisation…</span>}
+        {cloudStatus === 'synced' && <span className="text-[11px] text-teal ml-auto flex items-center gap-1"><Check size={11} /> À jour</span>}
+        {cloudStatus === 'error' && <span className="text-[11px] text-rust ml-auto">Échec de synchronisation</span>}
+      </div>
+      <p className="text-[12px] text-ink-soft mb-4">
+        Ce compte est rattaché à l'organisation <strong className="text-ink">{orgName || '…'}</strong>. Toutes
+        les données se synchronisent automatiquement avec le serveur — vous pouvez vous connecter
+        depuis n'importe quel appareil avec les mêmes identifiants et retrouver tout à l'identique.
+      </p>
+      <div className="border border-line rounded-lg p-3.5 mb-3">
+        <div className="text-[12.5px] font-medium text-ink mb-0.5">Connecté en tant que</div>
+        <div className="text-[12.5px] text-ink-soft">{session?.user?.email}</div>
+      </div>
+      <Button size="sm" variant="outline" onClick={signOut}><LogOut size={13} /> Se déconnecter</Button>
+    </Card>
+  );
+}
+
 function BackupCard({ lastBackupAt, exportSnapshot, importSnapshot, exportSynthese }) {
   const fileRef = useRef(null);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState(null); // { type: 'ok'|'error', message }
+  const [feedback, setFeedback] = useState(null);
 
   async function handleExport() {
     setBusy(true);
@@ -267,56 +347,5 @@ function BackupCard({ lastBackupAt, exportSnapshot, importSnapshot, exportSynthe
         utilisez « Restaurer depuis un fichier ».
       </p>
     </Card>
-  );
-}
-
-function ProfilePhotoField({ value, onChange }) {
-  async function handleFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const { fileToResizedDataUrl } = await import('../lib/image');
-    const dataUrl = await fileToResizedDataUrl(file, 500, 0.85);
-    onChange(dataUrl);
-  }
-  return (
-    <div className="relative shrink-0">
-      {value ? (
-        <div className="relative h-16 w-16 rounded-full overflow-hidden border border-line">
-          <img src={value} alt="Photo de profil" className="h-full w-full object-cover" />
-          <button
-            type="button"
-            onClick={() => onChange('')}
-            className="absolute -top-0.5 -right-0.5 h-5 w-5 rounded-full bg-ink/70 text-white flex items-center justify-center hover:bg-rust"
-          >
-            <X size={11} />
-          </button>
-        </div>
-      ) : (
-        <label className="flex flex-col items-center justify-center gap-0.5 h-16 w-16 rounded-full border-2 border-dashed border-line cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
-          <Camera size={16} className="text-ink-faint" />
-          <input type="file" accept="image/*" className="hidden" onChange={handleFile} />
-        </label>
-      )}
-    </div>
-  );
-}
-
-function UserAdder({ onAdd, roles }) {
-  const [form, setForm] = useState({ nom: '', email: '', role: 'agent' });
-  function submit(e) {
-    e.preventDefault();
-    if (!form.nom) return;
-    onAdd(form);
-    setForm({ nom: '', email: '', role: 'agent' });
-  }
-  return (
-    <form onSubmit={submit} className="flex flex-wrap gap-2">
-      <Input placeholder="Nom" value={form.nom} onChange={(e) => setForm({ ...form, nom: e.target.value })} className="flex-1 min-w-[120px] !py-2" />
-      <Input placeholder="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} className="flex-1 min-w-[140px] !py-2" />
-      <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} className="w-auto !py-2">
-        {roles.map((r) => <option key={r.id} value={r.id}>{r.label}</option>)}
-      </Select>
-      <Button type="submit" variant="outline" size="sm"><Plus size={14} /> Ajouter</Button>
-    </form>
   );
 }
