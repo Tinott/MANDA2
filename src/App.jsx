@@ -1,7 +1,8 @@
-
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar from './components/Sidebar';
+import Login from './pages/Login';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Mandats from './pages/Mandats';
@@ -18,6 +19,10 @@ import Reporting from './pages/Reporting';
 import Corbeille from './pages/Corbeille';
 import Parametres from './pages/Parametres';
 import UndoToast from './components/UndoToast';
+
+function LoadingScreen() {
+  return <div className="min-h-screen bg-ink" />;
+}
 
 function Shell() {
   const { societe } = useApp();
@@ -49,12 +54,25 @@ function Shell() {
   );
 }
 
-export default function App() {
+function AuthGate() {
+  const { session, orgId, loadingOrg } = useAuth();
+  if (session === undefined) return <LoadingScreen />;
+  if (!session) return <Login />;
+  if (loadingOrg) return <LoadingScreen />;
+  if (!orgId) return <Login />; // étape "créer votre cabinet", gérée dans Login.jsx
   return (
-    <AppProvider>
+    <AppProvider orgId={orgId}>
       <HashRouter>
         <Shell />
       </HashRouter>
     </AppProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
   );
 }
