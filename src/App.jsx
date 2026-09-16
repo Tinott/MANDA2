@@ -1,3 +1,4 @@
+
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import Sidebar from './components/Sidebar';
@@ -6,6 +7,7 @@ import Dashboard from './pages/Dashboard';
 import Mandats from './pages/Mandats';
 import Contacts from './pages/Contacts';
 import Suivi from './pages/Suivi';
+import Documents from './pages/Documents';
 import Facturation from './pages/Facturation';
 import NotesFrais from './pages/NotesFrais';
 import Comptabilite from './pages/Comptabilite';
@@ -15,6 +17,7 @@ import Promesses from './pages/Promesses';
 import Reporting from './pages/Reporting';
 import Corbeille from './pages/Corbeille';
 import Parametres from './pages/Parametres';
+import UndoToast from './components/UndoToast';
 
 function Shell() {
   const { societe } = useApp();
@@ -28,6 +31,7 @@ function Shell() {
           <Route path="/mandats" element={<Mandats />} />
           <Route path="/contacts" element={<Contacts />} />
           <Route path="/suivi" element={<Suivi />} />
+          <Route path="/documents" element={<Documents />} />
           <Route path="/facturation" element={<Facturation />} />
           <Route path="/frais" element={<NotesFrais />} />
           <Route path="/comptabilite" element={<Comptabilite />} />
@@ -40,6 +44,7 @@ function Shell() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </main>
+      <UndoToast />
     </div>
   );
 }
