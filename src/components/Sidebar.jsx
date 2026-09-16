@@ -2,7 +2,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutGrid, FileText, Receipt, BookOpen, Wallet, CalendarClock,
-  FileStack, BarChart3, Settings, Building2, Users, Trash2, TrendingUp,
+  FileStack, BarChart3, Settings, Building2, Users, Trash2, TrendingUp, FileSignature,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -11,6 +11,7 @@ const NAV = [
   { to: '/mandats', label: 'Mandats & biens', icon: Building2 },
   { to: '/contacts', label: 'Contacts', icon: Users },
   { to: '/suivi', label: 'Suivi commercial', icon: TrendingUp },
+  { to: '/documents', label: 'Documents', icon: FileSignature },
   { to: '/facturation', label: 'Facturation', icon: FileText },
   { to: '/frais', label: 'Notes de frais', icon: Receipt },
   { to: '/comptabilite', label: 'Comptabilité', icon: BookOpen },
@@ -36,7 +37,7 @@ export default function Sidebar() {
         </div>
       </div>
 
-      <nav className="flex-1 px-3 py-5 space-y-0.5">
+      <nav className="flex-1 px-3 py-5 space-y-0.5 overflow-y-auto">
         {NAV.map(({ to, label, icon: Icon, end }) => (
           <NavLink
             key={to}
