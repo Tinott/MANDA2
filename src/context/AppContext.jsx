@@ -1,4 +1,3 @@
-
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import { loadState, saveState, uid } from '../lib/storage';
 import { buildRegistre } from '../lib/calc';
@@ -9,34 +8,12 @@ const AppCtx = createContext(null);
 
 const DEFAULT_SOCIETE = {
   onboarded: false,
-  nom: '',
-  siret: '',
-  adresse: '',
-  carteT: '',
-  rcp: '',
-  cpi: '',
-  rcs: '',
-  tvaIntra: '',
-  banque: '',
-  iban: '',
-  bic: '',
-  capitalSocial: 10000,
-  immobilisationsNettes: 0,
-  dettesDiverses: 0,
-  regimeTva: 'reel_normal',
-  tauxTvaDefaut: 20,
-  couleurAccent: '#a06a2c',
-  contactNom: '',
-  telephone: '',
-  email: '',
-  photoContact: '',
-  soldeTresorerieInitial: 0,
-  remunerationGerantAnnuelle: 24000,
-  chargesSocialesAnnuelle: 18000,
-  dotationAmortissementAnnuelle: 1500,
-  impotsTaxesAnnuel: 500,
-  produitsFinanciersAnnuel: 0,
-  chargesFinancieresAnnuel: 0,
+  nom: '', siret: '', adresse: '', carteT: '', rcp: '', cpi: '', rcs: '', tvaIntra: '',
+  banque: '', iban: '', bic: '', capitalSocial: 10000, immobilisationsNettes: 0, dettesDiverses: 0,
+  regimeTva: 'reel_normal', tauxTvaDefaut: 20, couleurAccent: '#a06a2c',
+  contactNom: '', telephone: '', email: '', photoContact: '', soldeTresorerieInitial: 0,
+  remunerationGerantAnnuelle: 24000, chargesSocialesAnnuelle: 18000, dotationAmortissementAnnuelle: 1500,
+  impotsTaxesAnnuel: 500, produitsFinanciersAnnuel: 0, chargesFinancieresAnnuel: 0,
   bareme: {
     type: 'degressif',
     tranches: [
@@ -46,6 +23,8 @@ const DEFAULT_SOCIETE = {
     ],
   },
 };
+
+const DEFAULT_CONTACT_CATEGORIES = ['Propriétaire', 'Investisseur', 'Notaire', 'Banque'];
 
 export function AppProvider({ children }) {
   const [societe, setSocieteState] = useState(() => loadState('societe', DEFAULT_SOCIETE));
@@ -58,9 +37,11 @@ export function AppProvider({ children }) {
   const [lastBackupAt, setLastBackupAt] = useState(() => loadState('lastBackupAt', null));
   const [promesses, setPromesses] = useState(() => loadState('promesses', []));
   const [contacts, setContacts] = useState(() => loadState('contacts', []));
+  const [contactCategories, setContactCategories] = useState(() => loadState('contactCategories', DEFAULT_CONTACT_CATEGORIES));
   const [prospects, setProspects] = useState(() => loadState('prospects', []));
   const [courriers, setCourriers] = useState(() => loadState('courriers', []));
   const [trash, setTrash] = useState(() => loadState('trash', []));
+  const [documents, setDocuments] = useState(() => loadState('documents', []));
   const [toast, setToast] = useState(null); // { trashIds: string[], label } — éphémère, non persisté
 
   useEffect(() => saveState('societe', societe), [societe]);
@@ -73,17 +54,14 @@ export function AppProvider({ children }) {
   useEffect(() => saveState('lastBackupAt', lastBackupAt), [lastBackupAt]);
   useEffect(() => saveState('promesses', promesses), [promesses]);
   useEffect(() => saveState('contacts', contacts), [contacts]);
+  useEffect(() => saveState('contactCategories', contactCategories), [contactCategories]);
   useEffect(() => saveState('prospects', prospects), [prospects]);
   useEffect(() => saveState('courriers', courriers), [courriers]);
   useEffect(() => saveState('trash', trash), [trash]);
+  useEffect(() => saveState('documents', documents), [documents]);
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
 
-  // Suppression réversible — utilisée par tous les modules : rien n'est
-  // perdu immédiatement, l'élément part dans la corbeille avec toutes ses
-  // données. Un toast "Annuler" apparaît aussitôt (voir UndoToast) et reste
-  // affiché indéfiniment (jusqu'à fermeture ou action suivante) — la
-  // Corbeille reste de toute façon disponible sans limite de temps.
   function softDelete(type, list, setList, id) {
     const item = list.find((x) => x.id === id);
     if (!item) return;
@@ -93,9 +71,6 @@ export function AppProvider({ children }) {
     setToast({ trashIds: [trashId], label: trashEntryLabel(type, item) });
   }
 
-  // Suppression groupée — "Tout supprimer" sur une section (respecte les
-  // filtres déjà appliqués côté page). Chaque élément part individuellement
-  // en corbeille ; un seul toast permet de tout restaurer d'un coup.
   function softDeleteMany(type, list, setList, ids) {
     const idSet = new Set(ids);
     const items = list.filter((x) => idSet.has(x.id));
@@ -109,11 +84,12 @@ export function AppProvider({ children }) {
   const listByType = {
     mandat: mandats, facture: factures, frais: notesFrais, promesse: promesses,
     contact: contacts, prospect: prospects, courrier: courriers, dossier: dossiers,
+    document: documents,
   };
   const setterByType = {
     mandat: setMandats, facture: setFactures, frais: setNotesFrais,
     promesse: setPromesses, contact: setContacts, prospect: setProspects,
-    courrier: setCourriers, dossier: setDossiers,
+    courrier: setCourriers, dossier: setDossiers, document: setDocuments,
   };
 
   const value = useMemo(
@@ -149,10 +125,6 @@ export function AppProvider({ children }) {
       updateNoteFrais: (id, patch) => setNotesFrais((arr) => arr.map((n) => (n.id === id ? { ...n, ...patch } : n))),
       removeNoteFrais: (id) => softDelete('frais', notesFrais, setNotesFrais, id),
 
-      // Dossiers — classeurs libres, indépendants d'un mandat. Un mandat
-      // reste utilisable comme dossier de classement (voir Suivi commercial),
-      // mais un dossier peut aussi exister seul, pour un travail de
-      // prospection qui n'a pas encore (ou n'aura jamais) de mandat signé.
       dossiers,
       addDossier: (d) => {
         const rec = { id: uid('dossier'), createdAt: new Date().toISOString(), fichiers: [], partages: [], ...d };
@@ -161,6 +133,17 @@ export function AppProvider({ children }) {
       },
       updateDossier: (id, patch) => setDossiers((arr) => arr.map((d) => (d.id === id ? { ...d, ...patch } : d))),
       removeDossier: (id) => softDelete('dossier', dossiers, setDossiers, id),
+
+      // Documents juridiques — mandats, avenants, offre d'achat, générés
+      // depuis les modèles dynamiques (voir lib/documentEngine.js).
+      documents,
+      addDocument: (d) => {
+        const rec = { id: uid('document'), createdAt: new Date().toISOString(), statut: 'Brouillon', ...d };
+        setDocuments((arr) => [rec, ...arr]);
+        return rec;
+      },
+      updateDocument: (id, patch) => setDocuments((arr) => arr.map((d) => (d.id === id ? { ...d, ...patch, updatedAt: new Date().toISOString() } : d))),
+      removeDocument: (id) => softDelete('document', documents, setDocuments, id),
 
       promesses,
       addPromesse: (p) => {
@@ -185,8 +168,26 @@ export function AppProvider({ children }) {
       updateContact: (id, patch) => setContacts((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
       removeContact: (id) => softDelete('contact', contacts, setContacts, id),
 
-      // Pipeline commercial — suivi des prospects investisseurs et des
-      // courriers/mails de prospection, rattachables à un dossier libre.
+      // Catégories de contacts — onglets renommables librement par le
+      // client (ex. "Contact" → "Contacts acheteurs"). Renommer une
+      // catégorie met à jour tous les contacts qui la portent déjà.
+      contactCategories,
+      addContactCategory: (name) => {
+        const trimmed = name.trim();
+        if (!trimmed) return;
+        setContactCategories((arr) => (arr.includes(trimmed) ? arr : [...arr, trimmed]));
+      },
+      renameContactCategory: (oldName, newName) => {
+        const trimmed = newName.trim();
+        if (!trimmed || trimmed === oldName) return;
+        setContactCategories((arr) => arr.map((c) => (c === oldName ? trimmed : c)));
+        setContacts((arr) => arr.map((c) => (c.categorie === oldName ? { ...c, categorie: trimmed } : c)));
+      },
+      removeContactCategory: (name) => {
+        setContactCategories((arr) => arr.filter((c) => c !== name));
+        setContacts((arr) => arr.map((c) => (c.categorie === name ? { ...c, categorie: '' } : c)));
+      },
+
       prospects,
       addProspect: (p) => {
         const rec = { id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p };
@@ -225,12 +226,8 @@ export function AppProvider({ children }) {
 
       registre,
 
-      // "Tout supprimer" sur une section — type + liste d'ids à supprimer
-      // (la page appelante passe déjà la liste filtrée/affichée).
       removeMany: (type, ids) => softDeleteMany(type, listByType[type], setterByType[type], ids),
 
-      // Corbeille — restauration ou suppression définitive d'un élément
-      // supprimé depuis n'importe quel module.
       trash,
       restoreFromTrash: (trashId) => {
         const entry = trash.find((t) => t.id === trashId);
@@ -255,19 +252,15 @@ export function AppProvider({ children }) {
       permanentlyDelete: (trashId) => setTrash((t) => t.filter((x) => x.id !== trashId)),
       emptyTrash: () => setTrash([]),
 
-      // Toast d'annulation — affiché juste après toute suppression, partout
-      // dans l'app, jusqu'à fermeture manuelle ou suppression suivante.
       toast,
       dismissToast: () => setToast(null),
 
-      // Sauvegarde & transfert — voir Paramètres. Tout est en local ;
-      // ces fonctions donnent une trace exportable/restaurable.
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
         const at = downloadSnapshot({
           societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
-          promesses, contacts, prospects, courriers, trash,
+          promesses, contacts, prospects, courriers, trash, contactCategories, documents,
         });
         setLastBackupAt(at);
         return at;
@@ -284,9 +277,11 @@ export function AppProvider({ children }) {
         setKmCumules(data.kmCumules || 0);
         setPromesses(data.promesses || []);
         setContacts(data.contacts || []);
+        setContactCategories(data.contactCategories || DEFAULT_CONTACT_CATEGORIES);
         setProspects(data.prospects || []);
         setCourriers(data.courriers || []);
         setTrash(data.trash || []);
+        setDocuments(data.documents || []);
         return data;
       },
       exportSynthese: async () => {
@@ -294,7 +289,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, prospects, courriers, trash, toast]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, contactCategories, prospects, courriers, trash, toast, documents]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
