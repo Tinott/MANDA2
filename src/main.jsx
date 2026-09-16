@@ -8,3 +8,14 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>,
 )
+
+// Enregistre le service worker — condition nécessaire, avec le manifest,
+// pour que le navigateur propose "Installer l'application".
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {
+      // L'app fonctionne normalement même si l'enregistrement échoue —
+      // seule l'installation en tant qu'app ne sera pas proposée.
+    });
+  });
+}
