@@ -1,8 +1,11 @@
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+
+import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
 import { loadState, saveState, uid } from '../lib/storage';
 import { buildRegistre } from '../lib/calc';
 import { ROLES } from '../lib/seed';
 import { trashEntryLabel } from '../lib/trashLabels';
+import { buildSnapshot } from '../lib/backup';
+import { pullOrgData, scheduleOrgPush } from '../lib/orgSync';
 
 const AppCtx = createContext(null);
 
@@ -26,7 +29,7 @@ const DEFAULT_SOCIETE = {
 
 const DEFAULT_CONTACT_CATEGORIES = ['Propriétaire', 'Investisseur', 'Notaire', 'Banque'];
 
-export function AppProvider({ children }) {
+export function AppProvider({ children, orgId }) {
   const [societe, setSocieteState] = useState(() => loadState('societe', DEFAULT_SOCIETE));
   const [mandats, setMandats] = useState(() => loadState('mandats', []));
   const [factures, setFactures] = useState(() => loadState('factures', []));
@@ -44,6 +47,14 @@ export function AppProvider({ children }) {
   const [documents, setDocuments] = useState(() => loadState('documents', []));
   const [toast, setToast] = useState(null); // { trashIds: string[], label } — éphémère, non persisté
 
+  // Le compte cloud est désormais authentifié (voir AuthContext) : chaque
+  // organisation a une seule ligne de données, isolée par les règles côté
+  // serveur. localStorage reste une copie instantanée locale (pour un
+  // affichage immédiat et une résilience hors-ligne) ; org_data est la
+  // source de vérité partagée entre appareils.
+  const [cloudStatus, setCloudStatus] = useState('idle'); // idle | syncing | synced | error
+  const hydratedOrg = useRef(null);
+
   useEffect(() => saveState('societe', societe), [societe]);
   useEffect(() => saveState('mandats', mandats), [mandats]);
   useEffect(() => saveState('factures', factures), [factures]);
@@ -59,6 +70,46 @@ export function AppProvider({ children }) {
   useEffect(() => saveState('courriers', courriers), [courriers]);
   useEffect(() => saveState('trash', trash), [trash]);
   useEffect(() => saveState('documents', documents), [documents]);
+
+  // Au premier chargement pour cette organisation, récupère ses données
+  // depuis le serveur et remplace l'état local par cette version — c'est
+  // elle qui fait foi, puisqu'elle peut avoir été modifiée depuis un autre
+  // appareil ou par un collègue.
+  useEffect(() => {
+    if (!orgId || hydratedOrg.current === orgId) return;
+    hydratedOrg.current = orgId;
+    pullOrgData(orgId).then((data) => {
+      if (!data || Object.keys(data).length === 0) return;
+      setSocieteState(data.societe || DEFAULT_SOCIETE);
+      setMandats(data.mandats || []);
+      setFactures(data.factures || []);
+      setNotesFrais(data.notesFrais || []);
+      setDossiers(data.dossiers || []);
+      setUsers(data.users || []);
+      setKmCumules(data.kmCumules || 0);
+      setPromesses(data.promesses || []);
+      setContacts(data.contacts || []);
+      setContactCategories(data.contactCategories || DEFAULT_CONTACT_CATEGORIES);
+      setProspects(data.prospects || []);
+      setCourriers(data.courriers || []);
+      setTrash(data.trash || []);
+      setDocuments(data.documents || []);
+    });
+  }, [orgId]);
+
+  // Sauvegarde automatique en tâche de fond dès que quelque chose change,
+  // une fois les données de l'organisation chargées.
+  useEffect(() => {
+    if (!orgId || hydratedOrg.current !== orgId) return;
+    setCloudStatus('syncing');
+    scheduleOrgPush(orgId, () => buildSnapshot({
+      societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
+      promesses, contacts, prospects, courriers, trash, contactCategories, documents,
+    }));
+    const t = setTimeout(() => setCloudStatus('synced'), 2300);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orgId, societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents]);
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
 
@@ -255,6 +306,11 @@ export function AppProvider({ children }) {
       toast,
       dismissToast: () => setToast(null),
 
+      // Statut de synchronisation cloud — la donnée elle-même vit sur le
+      // serveur (org_data), rattachée à l'organisation authentifiée ; voir
+      // AuthContext pour la connexion et l'appartenance à l'organisation.
+      cloudStatus,
+
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
@@ -289,7 +345,7 @@ export function AppProvider({ children }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, contactCategories, prospects, courriers, trash, toast, documents]
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, contactCategories, prospects, courriers, trash, toast, documents, cloudStatus]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;
