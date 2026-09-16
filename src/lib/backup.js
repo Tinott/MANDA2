@@ -1,29 +1,12 @@
-
-// Sauvegarde & transfert de compte — l'application stocke tout en local
-// (localStorage du navigateur) : rien ne quitte l'appareil, mais rien ne
-// survit non plus à un cache vidé ou à un changement d'ordinateur. Ce module
-// permet d'exporter un instantané complet (téléchargeable, à transmettre
-// d'un appareil à l'autre) et de le restaurer.
-
 const SNAPSHOT_VERSION = 1;
 
-export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash }) {
+export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents }) {
   return {
     app: 'mandat',
     version: SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
-    societe,
-    mandats,
-    factures,
-    notesFrais,
-    dossiers,
-    users,
-    kmCumules,
-    promesses,
-    contacts,
-    prospects,
-    courriers,
-    trash,
+    societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
+    promesses, contacts, prospects, courriers, trash, contactCategories, documents,
   };
 }
 
