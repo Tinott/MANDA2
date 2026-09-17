@@ -42,6 +42,7 @@ export default function Login() {
           <Field label="Nom du cabinet" required>
             <Input value={orgNameInput} onChange={(e) => setOrgNameInput(e.target.value)} placeholder="Ex. Cabinet Cobalt Immobilier" autoFocus />
           </Field>
+          {error && <div className="text-[12.5px] text-rust">{error}</div>}
           <Button type="submit" variant="brass" className="w-full" disabled={submitting}>
             Créer mon espace <ArrowRight size={15} />
           </Button>
@@ -110,3 +111,4 @@ function Shell({ children }) {
     </div>
   );
 }
+
