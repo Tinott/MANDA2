@@ -1,16 +1,20 @@
+
+
 import { useState } from 'react';
 import { ArrowRight, Mail, Lock, Building2, CheckCircle2 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import { Field, Input, Button } from '../components/ui';
 
 export default function Login() {
-  const { session, orgId, loadingOrg, signUp, signIn, error, createOrganization } = useAuth();
+  const { session, orgId, loadingOrg, signUp, signIn, error, createOrganization, requestPasswordReset } = useAuth();
   const [mode, setMode] = useState('signin'); // signin | signup
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const [needsConfirmation, setNeedsConfirmation] = useState(false);
   const [orgNameInput, setOrgNameInput] = useState('');
+  const [forgotOpen, setForgotOpen] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
@@ -26,6 +30,15 @@ export default function Login() {
     setSubmitting(true);
     await createOrganization(orgNameInput.trim());
     setSubmitting(false);
+  }
+
+  async function submitForgot(e) {
+    e.preventDefault();
+    if (!email.trim()) return;
+    setSubmitting(true);
+    const res = await requestPasswordReset(email.trim());
+    setSubmitting(false);
+    if (res.ok) setResetSent(true);
   }
 
   // Étape "créer votre cabinet" — affichée une fois connecté, tant qu'aucune
@@ -51,8 +64,45 @@ export default function Login() {
     );
   }
 
-  if (needsConfirmation) {
+  if (forgotOpen) {
     return (
+      <Shell>
+        {resetSent ? (
+          <div className="bg-surface rounded-2xl border border-line p-7 shadow-2xl text-center">
+            <CheckCircle2 size={30} className="mx-auto text-teal mb-3" />
+            <div className="font-display text-[18px] text-ink">Email envoyé</div>
+            <p className="text-ink-soft text-[13px] mt-2">
+              Si un compte existe pour <strong>{email}</strong>, un lien de réinitialisation vient d'y être envoyé.
+            </p>
+            <Button variant="outline" className="mt-5" onClick={() => { setForgotOpen(false); setResetSent(false); }}>
+              Retour à la connexion
+            </Button>
+          </div>
+        ) : (
+          <>
+            <div className="text-center mb-6">
+              <h2 className="font-display text-[19px] text-white">Mot de passe oublié</h2>
+              <p className="text-white/50 text-[13px] mt-1.5">On vous envoie un lien pour en choisir un nouveau.</p>
+            </div>
+            <form onSubmit={submitForgot} className="bg-surface rounded-2xl border border-line p-7 shadow-2xl space-y-4">
+              <Field label="Email" required>
+                <Input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required autoFocus />
+              </Field>
+              {error && <div className="text-[12.5px] text-rust">{error}</div>}
+              <Button type="submit" variant="brass" className="w-full" disabled={submitting}>
+                Envoyer le lien <ArrowRight size={15} />
+              </Button>
+              <button type="button" onClick={() => setForgotOpen(false)} className="w-full text-center text-[12px] text-ink-faint hover:text-ink">
+                Retour à la connexion
+              </button>
+            </form>
+          </>
+        )}
+      </Shell>
+    );
+  }
+
+  if (needsConfirmation) {    return (
       <Shell>
         <div className="bg-surface rounded-2xl border border-line p-7 shadow-2xl text-center">
           <CheckCircle2 size={30} className="mx-auto text-teal mb-3" />
@@ -91,6 +141,11 @@ export default function Login() {
         <Button type="submit" variant="brass" className="w-full" disabled={submitting}>
           {mode === 'signup' ? 'Créer mon compte' : 'Se connecter'} <ArrowRight size={15} />
         </Button>
+        {mode === 'signin' && (
+          <button type="button" onClick={() => setForgotOpen(true)} className="w-full text-center text-[12px] text-ink-faint hover:text-ink">
+            Mot de passe oublié ?
+          </button>
+        )}
       </form>
     </Shell>
   );
@@ -111,4 +166,3 @@ function Shell({ children }) {
     </div>
   );
 }
-
