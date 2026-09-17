@@ -1,8 +1,10 @@
+
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { AppProvider, useApp } from './context/AppContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import Sidebar from './components/Sidebar';
 import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
 import Mandats from './pages/Mandats';
@@ -55,7 +57,8 @@ function Shell() {
 }
 
 function AuthGate() {
-  const { session, orgId, loadingOrg } = useAuth();
+  const { session, orgId, loadingOrg, recoveryMode } = useAuth();
+  if (recoveryMode) return <ResetPassword />;
   if (session === undefined) return <LoadingScreen />;
   if (!session) return <Login />;
   if (loadingOrg) return <LoadingScreen />;
