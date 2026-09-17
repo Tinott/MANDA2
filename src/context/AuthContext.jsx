@@ -1,3 +1,4 @@
+
 import { createContext, useContext, useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
 
@@ -60,7 +61,8 @@ export function AuthProvider({ children }) {
     if (orgErr) { setError(orgErr.message); return { ok: false }; }
     const { error: memErr } = await supabase.from('memberships').insert({ user_id: session.user.id, org_id: org.id, role: 'gerant' });
     if (memErr) { setError(memErr.message); return { ok: false }; }
-    await supabase.from('org_data').insert({ org_id: org.id, data: {} });
+    const { error: dataErr } = await supabase.from('org_data').insert({ org_id: org.id, data: {} });
+    if (dataErr) { setError(dataErr.message); return { ok: false }; }
     setOrgId(org.id);
     setOrgName(org.name);
     return { ok: true };
