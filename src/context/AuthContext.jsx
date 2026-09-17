@@ -11,11 +11,18 @@ export function AuthProvider({ children }) {
   const [orgName, setOrgName] = useState('');
   const [loadingOrg, setLoadingOrg] = useState(false);
   const [error, setError] = useState('');
+  const [recoveryMode, setRecoveryMode] = useState(false);
 
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => setSession(s));
+    const { data: sub } = supabase.auth.onAuthStateChange((event, s) => {
+      setSession(s);
+      // Déclenché quand la personne arrive via le lien reçu par email pour
+      // réinitialiser son mot de passe — on l'amène directement à l'écran
+      // "nouveau mot de passe", peu importe où elle en était avant.
+      if (event === 'PASSWORD_RECOVERY') setRecoveryMode(true);
+    });
     return () => sub.subscription.unsubscribe();
   }, []);
 
@@ -52,6 +59,27 @@ export function AuthProvider({ children }) {
     await supabase.auth.signOut();
   }
 
+  // Envoie un email avec un lien de réinitialisation — c'est le bon chemin
+  // quand on a oublié son mot de passe, jamais recréer un compte.
+  async function requestPasswordReset(email) {
+    setError('');
+    const { error: err } = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: window.location.origin + window.location.pathname,
+    });
+    if (err) { setError(err.message); return { ok: false }; }
+    return { ok: true };
+  }
+
+  // Appelé depuis l'écran affiché après avoir cliqué le lien reçu par
+  // email — fixe le nouveau mot de passe puis sort du mode récupération.
+  async function updatePassword(newPassword) {
+    setError('');
+    const { error: err } = await supabase.auth.updateUser({ password: newPassword });
+    if (err) { setError(err.message); return { ok: false }; }
+    setRecoveryMode(false);
+    return { ok: true };
+  }
+
   // Appelé une seule fois, quand un compte tout juste connecté n'a encore
   // aucune organisation — crée le cabinet et l'y rattache comme gérant.
   async function createOrganization(name) {
@@ -69,7 +97,10 @@ export function AuthProvider({ children }) {
   }
 
   return (
-    <AuthCtx.Provider value={{ session, orgId, orgName, loadingOrg, error, signUp, signIn, signOut, createOrganization }}>
+    <AuthCtx.Provider value={{
+      session, orgId, orgName, loadingOrg, error, recoveryMode,
+      signUp, signIn, signOut, createOrganization, requestPasswordReset, updatePassword,
+    }}>
       {children}
     </AuthCtx.Provider>
   );
