@@ -17,9 +17,19 @@ function proxyAvailable() {
   return Boolean(supabase);
 }
 
-// « L'IA est-elle disponible ? » — clé personnelle OU proxy partagé.
+// Mode IA choisi par l'utilisateur dans Paramètres > Intégrations :
+//   'partagee'     → IA de l'application (Edge Function, clé de l'administrateur)
+//   'personnelle'  → sa propre clé API Anthropic
+// Rétrocompatibilité : si rien n'est choisi, une clé saisie vaut « personnelle ».
+export function aiMode(societe) {
+  return societe?.aiMode || (societe?.anthropicApiKey ? 'personnelle' : 'partagee');
+}
+
+// « L'IA est-elle disponible ? » — selon le mode choisi.
 export function hasApiKey(societe) {
-  return Boolean(societe?.anthropicApiKey) || proxyAvailable();
+  return aiMode(societe) === 'personnelle'
+    ? Boolean(societe?.anthropicApiKey)
+    : proxyAvailable();
 }
 
 async function callClaude(societe, { system, messages, maxTokens = 2048 }) {
@@ -30,8 +40,11 @@ async function callClaude(societe, { system, messages, maxTokens = 2048 }) {
     messages,
   };
 
-  // --- Mode 1 : clé personnelle, appel direct. ---
-  if (societe?.anthropicApiKey) {
+  // --- Mode « Ma propre clé API » : appel direct. ---
+  if (aiMode(societe) === 'personnelle') {
+    if (!societe?.anthropicApiKey) {
+      throw new Error("Mode « Ma propre clé API » sélectionné mais aucune clé saisie — ajoutez votre clé dans Paramètres > Intégrations, ou repassez sur « IA de l'application ».");
+    }
     const res = await fetch(API_URL, {
       method: 'POST',
       headers: {
@@ -50,9 +63,9 @@ async function callClaude(societe, { system, messages, maxTokens = 2048 }) {
     return data.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
   }
 
-  // --- Mode 2 : IA partagée via l'Edge Function. ---
+  // --- Mode « IA de l'application » : Edge Function partagée. ---
   if (!proxyAvailable()) {
-    throw new Error("Aucune IA configurée : saisissez une clé API dans Paramètres > Intégrations, ou demandez à l'administrateur d'activer l'IA partagée.");
+    throw new Error("L'IA de l'application n'est pas disponible (Supabase non configuré) — choisissez « Ma propre clé API » dans Paramètres > Intégrations, ou contactez l'administrateur.");
   }
   const { data, error } = await supabase.functions.invoke('claude-proxy', { body: payload });
   if (error) {
