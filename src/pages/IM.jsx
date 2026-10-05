@@ -1,8 +1,8 @@
 import { useState } from 'react';
-import { FileStack, Sparkles, Download, UploadCloud, Loader2, Plus, ImagePlus, X } from 'lucide-react';
+import { FileStack, Sparkles, Download, UploadCloud, Loader2, ImagePlus, X, Wand2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatEUR } from '../lib/calc';
-import { PageHeader, Card, Button, Field, Input, Select, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
+import { hasApiKey, generateImTexts } from '../lib/ai';
+import { PageHeader, Card, Button, Field, Input, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
 
 const STEPS = ['Bien', 'Documents', 'Relecture', 'Export'];
 
@@ -12,14 +12,14 @@ async function downloadImPptx(bien, societe) {
 }
 
 export default function IM() {
-  const { mandats, societe, dossiers, addDossier, updateDossier } = useApp();
+  const { mandats, societe, dossiers, addDossier } = useApp();
   const [step, setStep] = useState(mandats.length ? 0 : -1);
-  const [mandatId, setMandatId] = useState(mandats[0]?.id || '');
   const [bien, setBien] = useState(null);
   const [uploading, setUploading] = useState(false);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiError, setAiError] = useState('');
 
   const imGeneres = dossiers.filter((d) => d.type === 'IM');
-  const mandat = mandats.find((m) => m.id === mandatId);
 
   function startFrom(m) {
     setBien({
@@ -30,7 +30,6 @@ export default function IM() {
       prixRecommande: '', modaliteVente: '', honorairesPct: '', environnement: '',
       photoPrincipale: '', photoComposition: '', photoSituation: '',
     });
-    setMandatId(m.id);
     setStep(1);
   }
 
@@ -63,11 +62,33 @@ export default function IM() {
     setBien((b) => ({ ...b, [field]: dataUrl }));
   }
 
+  // Rédaction assistée : complète uniquement les champs encore vides
+  // (environnement, description de l'actif, activité du locataire) — ce que
+  // vous avez déjà écrit n'est jamais écrasé.
+  async function redigerAvecIA() {
+    setAiBusy(true);
+    setAiError('');
+    try {
+      const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, ...infos } = bien;
+      const textes = await generateImTexts(societe, infos);
+      setBien((b) => ({
+        ...b,
+        environnement: b.environnement?.trim() ? b.environnement : (textes.environnement || b.environnement),
+        description: b.description?.trim() ? b.description : (textes.descriptionActif || b.description),
+        activiteLocataire: b.activiteLocataire?.trim() ? b.activiteLocataire : (textes.presentationLocataire || b.activiteLocataire),
+      }));
+    } catch {
+      setAiError("La rédaction assistée a échoué — vérifiez la clé API dans Paramètres → Intégrations, puis réessayez.");
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
   function finish() {
     // La bibliothèque garde une trace du document (nom, statut) mais pas les
     // photos elles-mêmes — déjà présentes dans le .pptx téléchargé, elles
     // n'ont pas besoin d'être dupliquées dans le stockage local.
-    const { photoPrincipale, photoComposition, photoSituation, ...bienLeger } = bien;
+    const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, ...bienLeger } = bien;
     addDossier({ type: 'IM', nom: `IM — ${bien.adresse}`, bien: bienLeger, statut: 'Diffusé' });
     setStep(3);
   }
@@ -133,7 +154,18 @@ export default function IM() {
 
             {step === 2 && bien && (
               <div className="space-y-4">
-                <p className="text-[12.5px] text-ink-soft flex items-center gap-1.5"><Sparkles size={13} className="text-brass" /> Relisez et complétez avant génération.</p>
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-[12.5px] text-ink-soft flex items-center gap-1.5"><Sparkles size={13} className="text-brass" /> Relisez et complétez avant génération.</p>
+                  {hasApiKey(societe) && (
+                    <Button variant="outline" onClick={redigerAvecIA} disabled={aiBusy} className="shrink-0">
+                      {aiBusy ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                      {aiBusy ? 'Rédaction…' : "Rédiger avec l'IA"}
+                    </Button>
+                  )}
+                </div>
+                {aiError && (
+                  <div className="flex items-center gap-2 text-[12px] text-rust"><AlertCircle size={13} /> {aiError}</div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Prix / valeur"><Input type="number" value={bien.prix} onChange={(e) => setBien({ ...bien, prix: e.target.value })} /></Field>
                   <Field label="Loyer annuel"><Input type="number" value={bien.loyerAnnuel} onChange={(e) => setBien({ ...bien, loyerAnnuel: e.target.value })} /></Field>

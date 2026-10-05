@@ -21,6 +21,8 @@ import Reporting from './pages/Reporting';
 import Corbeille from './pages/Corbeille';
 import Parametres from './pages/Parametres';
 import UndoToast from './components/UndoToast';
+import Mail from './pages/Mail';
+import Assistant from './pages/Assistant';
 
 function LoadingScreen() {
   return <div className="min-h-screen bg-ink" />;
@@ -44,6 +46,8 @@ function Shell() {
           <Route path="/comptabilite" element={<Comptabilite />} />
           <Route path="/tresorerie" element={<Tresorerie />} />
           <Route path="/im" element={<IM />} />
+          <Route path="/mail" element={<Mail />} />
+          <Route path="/assistant" element={<Assistant />} />
           <Route path="/promesses" element={<Promesses />} />
           <Route path="/rapports" element={<Reporting />} />
           <Route path="/corbeille" element={<Corbeille />} />

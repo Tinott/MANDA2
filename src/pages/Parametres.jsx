@@ -5,6 +5,7 @@ import { useAuth } from '../context/AuthContext';
 import { clearAll } from '../lib/storage';
 import { formatDate } from '../lib/calc';
 import { PageHeader, Card, Button, Field, Input, Select, Badge } from '../components/ui';
+import IntegrationsCard from '../components/IntegrationsCard';
 
 export default function Parametres() {
   const { societe, setSociete, users, addUser, removeUser, roles, lastBackupAt, exportSnapshot, importSnapshot, exportSynthese } = useApp();
@@ -33,6 +34,8 @@ export default function Parametres() {
   return (
     <div>
       <PageHeader eyebrow="Configuration" title="Paramètres" description="Informations de la société, barème d'honoraires et accès collaborateurs." />
+
+      <IntegrationsCard />
 
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="space-y-5">

@@ -4,6 +4,7 @@ import { FileText, Receipt, Building2, ArrowRight, AlertTriangle } from 'lucide-
 import { useApp } from '../context/AppContext';
 import { aggregatePeriod, formatEUR, soldeTresorerieAt, formatDate } from '../lib/calc';
 import { PageHeader, StatCard, Card, Badge, statusTone, EmptyState, Button } from '../components/ui';
+import AlertsCard from '../components/AlertsCard';
 
 function monthBounds(offset = 0) {
   const d = new Date();
@@ -71,6 +72,7 @@ export default function Dashboard() {
         />
       ) : (
         <>
+          <AlertsCard />
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <StatCard label="CA du mois (HT)" value={formatEUR(agg.totalProduitsHT)} sub={thisMonth.start.slice(0, 7)} />
             <StatCard label="Trésorerie estimée" value={formatEUR(solde)} tone={solde >= 0 ? 'good' : 'warn'} />

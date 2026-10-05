@@ -15,7 +15,16 @@ export async function generateDocumentPdf({ typeId, variante, champs, societe, n
     _agenceRcp: societe?.rcp,
   });
 
-  const sections = mod.buildSections(filledChamps, variante);
+  // Normalisation typographique pour les polices PDF standard : l'espace
+  // fine insécable (U+202F, issue de toLocaleString fr-FR) n'existe pas en
+  // WinAnsi et s'imprimerait comme un caractère parasite — on lui substitue
+  // l'espace insécable classique (U+00A0).
+  const nettoie = (t) => String(t).replace(/\u202f/g, '\u00a0');
+  const sections = mod.buildSections(filledChamps, variante).map((sec) => ({
+    ...sec,
+    title: nettoie(sec.title),
+    paragraphs: (sec.paragraphs || []).map(nettoie),
+  }));
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
   const marginX = 54;
   const pageW = 595;

@@ -1,179 +1,230 @@
 import pptxgen from 'pptxgenjs';
-import { formatEUR } from './calc';
+
+// Mémorandum d'information (IM) — structure professionnelle calquée sur les
+// IM Capital Markets : couverture photo, sommaire, intercalaires numérotés,
+// 01 Situation géographique · 02 Composition du bien · 03 Conditions
+// financières (schéma bail + tableau) · 04 Modalités de cession & contact.
 
 const INK = '14181D';
-const BRASS = 'A06A2C';
-const PAPER = 'F3F1EC';
-const LINE = 'E2DED4';
+const PAPER = 'FFFFFF';
 const MUTED = '565F6B';
+const LINE = 'E2DED4';
+
 
 export async function generateImPptx(bien, societe) {
   const pptx = new pptxgen();
   pptx.defineLayout({ name: 'IM', width: 13.33, height: 7.5 });
   pptx.layout = 'IM';
-
   const nomSociete = (societe?.nom || 'BROKER IMMOBILIER').toUpperCase();
-  let sectionNum = 1;
-  const nextSection = () => String(sectionNum++).padStart(2, '0');
+  const annee = new Date().getFullYear();
+  const moisAnnee = new Date().toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+  let pageNum = 0;
 
-  // --- Couverture — photo pleine hauteur si fournie, sinon fond ink seul. ---
-  const cover = pptx.addSlide();
-  cover.background = { color: INK };
-  const hasCoverPhoto = Boolean(bien?.photoPrincipale);
-  const leftW = hasCoverPhoto ? 7.3 : 13.33;
-  if (hasCoverPhoto) {
-    cover.addImage({ data: bien.photoPrincipale, x: leftW, y: 0, w: 13.33 - leftW, h: 7.5, sizing: { type: 'cover', w: 13.33 - leftW, h: 7.5 } });
-  }
-  cover.addShape('rect', { x: 0, y: 6.9, w: leftW, h: 0.6, fill: { color: BRASS } });
-  cover.addText(nomSociete, { x: 0.7, y: 0.55, w: leftW - 1, h: 0.5, fontSize: 12, color: 'D8CBB2', charSpacing: 3, fontFace: 'Arial' });
-  cover.addText(bien?.titre || 'OPPORTUNITÉ\nD\u2019INVESTISSEMENT', {
-    x: 0.65, y: 2.2, w: leftW - 0.8, h: 2.4, fontSize: hasCoverPhoto ? 34 : 42, bold: true, color: 'FFFFFF', fontFace: 'Georgia',
-  });
-  if (bien?.locataire) {
-    cover.addText(`LOCATAIRE : ${bien.locataire.toUpperCase()}`, {
-      x: 0.7, y: hasCoverPhoto ? 4.35 : 4.55, w: leftW - 1, h: 0.5, fontSize: 15, bold: true, color: 'D8CBB2', fontFace: 'Arial',
-    });
-  }
-  cover.addText((bien?.adresse || 'Adresse du bien').toUpperCase(), {
-    x: 0.7, y: hasCoverPhoto ? 5.9 : 6.15, w: leftW - 0.9, h: 0.7, fontSize: hasCoverPhoto ? 16 : 20, bold: true, color: 'FFFFFF', fontFace: 'Arial',
-  });
-  cover.addText('Opportunité confidentielle — diffusion restreinte', {
-    x: 0.7, y: 7.05, w: leftW - 1, h: 0.35, fontSize: 9, color: '8A93A0', fontFace: 'Arial',
-  });
-
-  // --- Situation géographique — uniquement si une carte/capture est fournie. ---
-  if (bien?.photoSituation) {
-    const sSit = pptx.addSlide();
-    sSit.background = { color: 'FFFFFF' };
-    sectionHeader(sSit, nextSection(), 'Situation géographique', nomSociete);
-    sSit.addText(bien?.environnement || 'Description de l\u2019environnement et de l\u2019accessibilité du bien à compléter.', {
-      x: 0.7, y: 1.9, w: 5.6, h: 4.8, fontSize: 12.5, color: '2A2F36', valign: 'top', fontFace: 'Arial', lineSpacingMultiple: 1.4,
-    });
-    sSit.addImage({ data: bien.photoSituation, x: 6.6, y: 1.9, w: 6.0, h: 4.8, sizing: { type: 'contain', w: 6.0, h: 4.8 } });
-  }
-
-  // --- Présentation de l'opportunité ---
-  const s1 = pptx.addSlide();
-  s1.background = { color: 'FFFFFF' };
-  sectionHeader(s1, nextSection(), 'Présentation de l\u2019opportunité', nomSociete);
-  const kpis = [
-    ['Prix de vente net vendeur', bien?.prix ? formatEUR(bien.prix) : '—'],
-    ['Surface', bien?.surface ? `${bien.surface} m²` : '—'],
-    ['Loyer annuel HC', bien?.loyerAnnuel ? formatEUR(bien.loyerAnnuel) : '—'],
-    ['Rendement brut', bien?.prix && bien?.loyerAnnuel ? `${((bien.loyerAnnuel / bien.prix) * 100).toFixed(2)} %` : '—'],
-  ];
-  kpis.forEach(([label, value], i) => {
-    const x = 0.7 + i * 3;
-    s1.addShape('rect', { x, y: 1.9, w: 2.7, h: 1.4, fill: { color: PAPER }, line: { color: LINE, width: 1 } });
-    s1.addText(value, { x, y: 2.12, w: 2.7, h: 0.55, align: 'center', fontSize: 19, bold: true, color: INK, fontFace: 'Georgia' });
-    s1.addText(label.toUpperCase(), { x: x + 0.1, y: 2.68, w: 2.5, h: 0.5, align: 'center', fontSize: 8, color: MUTED, charSpacing: 0.5 });
-  });
-  s1.addText(bien?.description || 'Description du bien et de son environnement à compléter.', {
-    x: 0.7, y: 3.7, w: 11.9, h: 2.9, fontSize: 12.5, color: '2A2F36', valign: 'top', fontFace: 'Arial', lineSpacingMultiple: 1.35,
-  });
-
-  // --- Composition du bien — image (plan/façade) si fournie, sinon tableau pleine largeur. ---
-  const s2 = pptx.addSlide();
-  s2.background = { color: 'FFFFFF' };
-  sectionHeader(s2, nextSection(), 'Composition du bien', nomSociete);
-  const rows = [
-    ['Type de bien', bien?.typeBien || '—'],
-    ['Surface', bien?.surface ? `${bien.surface} m²` : '—'],
-    ['Situation locative', bien?.situationLocative || '—'],
-    ['Charges annuelles', bien?.charges ? formatEUR(bien.charges) : '—'],
-    ['DPE', bien?.dpe || '—'],
-    ['Référence cadastrale', bien?.reference || '—'],
-  ];
-  const hasCompoPhoto = Boolean(bien?.photoComposition);
-  const tableW = hasCompoPhoto ? 5.8 : 11.9;
-  const tableX = hasCompoPhoto ? 6.8 : 0.7;
-  if (hasCompoPhoto) {
-    s2.addImage({ data: bien.photoComposition, x: 0.7, y: 1.9, w: 5.7, h: 4.8, sizing: { type: 'contain', w: 5.7, h: 4.8 } });
-  }
-  s2.addTable(
-    rows.map(([k, v]) => [
-      { text: k, options: { bold: true, color: MUTED, fontSize: 11, fill: { color: PAPER } } },
-      { text: v, options: { color: INK, fontSize: 11 } },
-    ]),
-    { x: tableX, y: 1.9, w: tableW, colW: hasCompoPhoto ? [2.4, tableW - 2.4] : [4, 7.9], border: { type: 'solid', color: LINE, pt: 0.5 }, autoPage: false }
-  );
-
-  // --- Conditions financières (mise en page à blocs, comme un bail commercial) ---
-  const s3 = pptx.addSlide();
-  s3.background = { color: 'FFFFFF' };
-  sectionHeader(s3, nextSection(), 'Conditions financières', nomSociete);
-
-  const block = (x, y, w, h, label, value) => {
-    s3.addShape('rect', { x, y, w, h, fill: { color: 'FFFFFF' }, line: { color: LINE, width: 1 } });
-    s3.addText(label.toUpperCase(), { x: x + 0.18, y: y + 0.1, w: w - 0.36, h: 0.3, fontSize: 8.5, bold: true, color: MUTED, charSpacing: 0.5 });
-    s3.addText(value, { x: x + 0.18, y: y + 0.38, w: w - 0.36, h: h - 0.5, fontSize: 13, color: INK, fontFace: 'Georgia' });
+  const footer = (slide) => {
+    pageNum += 1;
+    slide.addText(`© ${annee} ${nomSociete} — Confidentiel`, { x: 0, y: 7.12, w: 13.33, h: 0.3, align: 'center', fontSize: 8, color: MUTED, fontFace: 'Georgia', italic: true });
+    if (pageNum > 1) slide.addText(String(pageNum), { x: 12.6, y: 7.05, w: 0.5, h: 0.35, fontSize: 10, bold: true, color: INK, align: 'center' });
   };
-  block(0.7, 1.85, 4.6, 0.95, 'Loyer', bien?.loyerAnnuel ? `${formatEUR(bien.loyerAnnuel)} annuel HC, hors TVA` : '—');
-  block(5.6, 1.85, 3, 0.95, 'Durée du bail', bien?.dureeBail || '3/6/9');
-  block(0.7, 2.95, 4.6, 0.95, 'Indexation', bien?.indexation || 'ILC — révision triennale');
-  block(5.6, 2.95, 3, 0.95, 'Date d\u2019effet', bien?.dateEffetBail || '—');
-  block(0.7, 4.05, 7.9, 1.5, 'Activité', bien?.activiteLocataire || bien?.description || '—');
-  block(0.7, 5.7, 4.6, 0.85, 'Loyer', bien?.tripleNet ? 'Triple net — charges récupérables' : 'Charges au réel');
 
-  // --- Synthèse tarifaire & recommandation ---
-  const s4 = pptx.addSlide();
-  s4.background = { color: 'FFFFFF' };
-  sectionHeader(s4, nextSection(), 'Conditions de cession', nomSociete);
-  s4.addTable(
+  const brand = (slide, dark = false) => {
+    slide.addText(nomSociete, { x: 0.5, y: 0.35, w: 4.5, h: 0.5, fontSize: 18, charSpacing: 6, bold: true, color: dark ? 'FFFFFF' : INK, fontFace: 'Arial' });
+  };
+
+  const sectionHeader = (slide, num, titre, sousTitre) => {
+    slide.addText(num, { x: 0.35, y: 0.3, w: 1, h: 0.6, fontSize: 28, bold: true, color: INK, fontFace: 'Arial' });
+    slide.addShape('rect', { x: 1.1, y: 0.62, w: 1.4, h: 0.07, fill: { color: INK } });
+    slide.addText(titre.toUpperCase(), { x: 0.9, y: 0.85, w: 9.5, h: 0.6, fontSize: 24, bold: true, color: '1F3A2E', fontFace: 'Arial' });
+    if (sousTitre) slide.addText(sousTitre.toUpperCase(), { x: 0.95, y: 1.4, w: 9.5, h: 0.45, fontSize: 15, color: INK, charSpacing: 2, fontFace: 'Arial' });
+  };
+
+  const divider = (num, titre) => {
+    const s = pptx.addSlide();
+    s.background = { color: PAPER };
+    brand(s);
+    s.addText(num, { x: 1.4, y: 2.1, w: 3.3, h: 2.1, fontSize: 150, bold: true, color: '1F8A5F', fontFace: 'Arial' });
+    s.addText(titre.toUpperCase(), { x: 4.9, y: 2.7, w: 7.6, h: 1.4, fontSize: 36, bold: true, color: INK, fontFace: 'Arial' });
+    s.addShape('rect', { x: 4.95, y: 4.0, w: 0.8, h: 0.06, fill: { color: INK } });
+    footer(s);
+    return s;
+  };
+
+  // ---------------------------------------------------------------- Couverture
+  const cover = pptx.addSlide();
+  cover.background = { color: PAPER };
+  cover.addShape('rect', { x: 8.6, y: 0, w: 4.73, h: 7.5, fill: { color: INK } });
+  brand(cover);
+  if (bien?.photoPrincipale) {
+    cover.addImage({ data: bien.photoPrincipale, x: 4.85, y: 2.0, w: 7.75, h: 3.25, sizing: { type: 'cover', w: 7.75, h: 3.25 } });
+  }
+  cover.addText((bien?.titre || `${bien?.typeBien || 'ACTIF'}`).toUpperCase(), { x: 0.4, y: 2.4, w: 4.4, h: 1.5, fontSize: 36, bold: true, color: INK, fontFace: 'Arial' });
+  if (bien?.locataire) {
+    cover.addText([{ text: 'LOCATAIRE :\n', options: { color: MUTED, bold: false } }, { text: bien.locataire.toUpperCase(), options: { bold: true, color: INK } }], { x: 0.4, y: 3.95, w: 4.4, h: 1.1, fontSize: 26, fontFace: 'Arial' });
+  }
+  cover.addText(`${moisAnnee.charAt(0).toUpperCase() + moisAnnee.slice(1)} — Opportunité d'investissement — Confidentiel`, { x: 0.42, y: 5.15, w: 4.4, h: 0.4, fontSize: 11, italic: true, color: MUTED, fontFace: 'Georgia' });
+  cover.addShape('rect', { x: 0, y: 6.3, w: 13.33, h: 0.75, fill: { color: PAPER } });
+  cover.addText((bien?.adresse || 'Adresse du bien').toUpperCase(), { x: 0.3, y: 6.28, w: 12.7, h: 0.7, fontSize: 30, bold: true, color: INK, fontFace: 'Arial' });
+  footer(cover);
+
+  // ------------------------------------------------------------------ Sommaire
+  const som = pptx.addSlide();
+  som.background = { color: PAPER };
+  brand(som);
+  som.addShape('rect', { x: 0, y: 0, w: 0.55, h: 7.5, fill: { color: INK } });
+  som.addText('SOMMAIRE', { x: 0.02, y: 2.4, w: 0.5, h: 3, fontSize: 20, bold: true, color: 'FFFFFF', rotate: 270, align: 'center', fontFace: 'Arial' });
+  const items = ['Situation géographique', 'Composition du bien', 'Conditions financières', 'Modalités de cession & contact'];
+  items.forEach((t, i) => {
+    const yy = 1.3 + i * 1.35;
+    som.addText(String(i + 1), { x: 1.5, y: yy, w: 0.9, h: 0.9, fontSize: 44, bold: true, color: INK, fontFace: 'Arial' });
+    som.addShape('rect', { x: 1.55, y: yy + 0.78, w: 0.75, h: 0.28, fill: { color: '1F8A5F' } });
+    som.addText(t.toUpperCase(), { x: 2.7, y: yy + 0.18, w: 8.5, h: 0.6, fontSize: 18, bold: true, color: INK, fontFace: 'Arial' });
+  });
+  footer(som);
+
+  // ------------------------------------------- 01 — Situation géographique
+  divider('01', 'Situation\ngéographique');
+  const geo = pptx.addSlide();
+  geo.background = { color: PAPER };
+  geo.addShape('rect', { x: 8.55, y: 0, w: 4.78, h: 7.5, fill: { color: INK } });
+  brand(geo, false);
+  sectionHeader(geo, '01', "Présentation de l'emplacement");
+  geo.addText(`Opportunité d'acquisition — ${bien?.typeBien || 'actif'}${bien?.locataire ? ` loué à ${bien.locataire.toUpperCase()}` : ''}`, { x: 0.5, y: 1.75, w: 5.4, h: 0.6, fontSize: 13, bold: true, color: INK, fontFace: 'Georgia' });
+  geo.addText(bien?.environnement || "Décrivez ici le bassin économique, les accès routiers et la dynamique du secteur (champ « Environnement » de l'assistant IM).", { x: 0.5, y: 2.35, w: 5.4, h: 4.3, fontSize: 13.5, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.25, align: 'justify' });
+  if (bien?.photoSituation) geo.addImage({ data: bien.photoSituation, x: 6.2, y: 1.8, w: 6.3, h: 4.6, sizing: { type: 'cover', w: 6.3, h: 4.6 } });
+  footer(geo);
+
+  // ------------------------------------------------ 02 — Composition du bien
+  divider('02', 'Composition\ndu bien');
+  const comp = pptx.addSlide();
+  comp.background = { color: PAPER };
+  comp.addShape('rect', { x: 9.0, y: 0, w: 4.33, h: 7.5, fill: { color: INK } });
+  brand(comp);
+  sectionHeader(comp, '02', 'Composition du local');
+  const details = [
+    bien?.surface ? `Surface totale : ${bien.surface} m²` : null,
+    bien?.typeBien ? `Typologie : ${bien.typeBien}` : null,
+    bien?.reference ? `Référence : ${bien.reference}` : null,
+    bien?.dpe ? `DPE : ${bien.dpe}` : null,
+  ].filter(Boolean);
+  comp.addText(details.map((d) => ({ text: `•  ${d}\n`, options: {} })), { x: 0.55, y: 1.85, w: 4.1, h: 2.5, fontSize: 14, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.4 });
+  if (bien?.description) comp.addText(bien.description, { x: 0.55, y: 4.0, w: 4.1, h: 2.6, fontSize: 12, color: MUTED, fontFace: 'Georgia', lineSpacingMultiple: 1.2, align: 'justify' });
+  if (bien?.photoComposition) comp.addImage({ data: bien.photoComposition, x: 4.95, y: 1.85, w: 7.5, h: 4.7, sizing: { type: 'contain', w: 7.5, h: 4.7 } });
+  footer(comp);
+
+  // --------------------------------------------- 03 — Conditions financières
+  divider('03', 'Conditions\nfinancières');
+
+  // 3a — schéma bail (boîtes alternées comme l'IM Tesla)
+  const fin = pptx.addSlide();
+  fin.background = { color: PAPER };
+  fin.addShape('rect', { x: 8.55, y: 0, w: 4.78, h: 7.5, fill: { color: INK } });
+  brand(fin);
+  sectionHeader(fin, '03', 'Conditions financières');
+  const loyer = Number(bien?.loyerAnnuel) || 0;
+  const boxes = [
+    { t: 'Loyer', v: loyer ? `${loyer.toLocaleString('fr-FR')} € annuel HC, hors TVA` : 'À renseigner', x: 2.9 },
+    { t: 'Durée du bail', v: bien?.dureeBail || '3/6/9', x: 6.1 },
+    { t: 'Indexation', v: bien?.indexation || 'ILC — Triennale', x: 2.9 },
+    { t: "Date d'effet du bail", v: bien?.dateEffetBail || '—', x: 6.1 },
+    { t: 'Activité du locataire', v: (bien?.activiteLocataire || '').slice(0, 220) || '—', x: 2.9, h: 1.3 },
+    { t: 'Régime des charges', v: bien?.tripleNet ? 'Loyer triple net — charges récupérables sauf art. 606' : 'Charges selon bail', x: 6.1 },
+  ];
+  let by = 1.85;
+  boxes.forEach((b, i) => {
+    const h = b.h || 0.8;
+    fin.addShape('rect', { x: b.x, y: by, w: 4.2, h, fill: { color: i % 2 ? 'E9EDF2' : 'FFFFFF' }, line: { color: LINE, width: 1 } });
+    fin.addText([{ text: `${b.t}\n`, options: { bold: true, underline: true, fontSize: 13 } }, { text: b.v, options: { fontSize: 10.5 } }], { x: b.x + 0.15, y: by + 0.06, w: 3.9, h: h - 0.1, color: INK, fontFace: 'Georgia', align: 'center', valign: 'middle' });
+    if (i < boxes.length - 1) fin.addShape('rect', { x: b.x + 2.05, y: by + h, w: 0.1, h: 0.18, fill: { color: '35506B' } });
+    by += h + 0.18;
+    if (by > 6.4) by = 6.4;
+  });
+  footer(fin);
+
+  // 3b — tableau lot / surface / loyer / prix + modalités
+  const fin2 = pptx.addSlide();
+  fin2.background = { color: PAPER };
+  fin2.addShape('rect', { x: 9.0, y: 0, w: 4.33, h: 7.5, fill: { color: INK } });
+  brand(fin2);
+  sectionHeader(fin2, '03', 'Conditions financières');
+  const prix = Number(bien?.prix) || 0;
+  const rendement = prix && loyer ? `${((loyer / prix) * 100).toFixed(2).replace('.', ',')} %` : '—';
+  fin2.addTable(
     [
       [
-        { text: 'Lot', options: { bold: true, fill: { color: PAPER }, color: MUTED, fontSize: 10.5 } },
-        { text: 'Surface', options: { bold: true, fill: { color: PAPER }, color: MUTED, fontSize: 10.5 } },
-        { text: 'Loyer HT HC', options: { bold: true, fill: { color: PAPER }, color: MUTED, fontSize: 10.5 } },
-        { text: 'Prix net vendeur', options: { bold: true, fill: { color: PAPER }, color: MUTED, fontSize: 10.5 } },
+        { text: 'Lot', options: { bold: true, fill: { color: 'D9EBF5' } } },
+        { text: 'Surface', options: { bold: true, fill: { color: 'D9EBF5' } } },
+        { text: 'Loyer HT HC €/an', options: { bold: true, fill: { color: 'D9EBF5' } } },
+        { text: 'Prix de vente net vendeur', options: { bold: true, fill: { color: 'D9EBF5' } } },
+        { text: 'Rendement AEM', options: { bold: true, fill: { color: 'D9EBF5' } } },
       ],
       [
-        { text: bien?.adresse || '—', options: { color: INK, fontSize: 11 } },
-        { text: bien?.surface ? `${bien.surface} m²` : '—', options: { color: INK, fontSize: 11 } },
-        { text: bien?.loyerAnnuel ? formatEUR(bien.loyerAnnuel) : '—', options: { color: INK, fontSize: 11 } },
-        { text: bien?.prix ? formatEUR(bien.prix) : '—', options: { color: INK, fontSize: 11 } },
+        bien?.adresse || '—',
+        bien?.surface ? `${bien.surface} m²` : '—',
+        loyer ? `${loyer.toLocaleString('fr-FR')} €` : '—',
+        prix ? `${prix.toLocaleString('fr-FR')} €` : 'Nous consulter',
+        rendement,
       ],
     ],
-    { x: 0.7, y: 1.85, w: 11.9, colW: [4.5, 2.2, 2.5, 2.7], border: { type: 'solid', color: LINE, pt: 0.5 }, autoPage: false }
+    { x: 0.6, y: 2.0, w: 8.1, fontSize: 12, fontFace: 'Georgia', color: INK, border: { type: 'solid', color: INK, pt: 0.75 }, align: 'center', valign: 'middle', rowH: 0.55 }
   );
   const bullets = [
-    bien?.prixRecommande ? `Prix net vendeur recommandé : ${formatEUR(bien.prixRecommande)}` : null,
-    bien?.modaliteVente || 'Vente d\u2019actif de gré à gré',
-    bien?.honorairesPct ? `Honoraires : ${bien.honorairesPct}% HT du prix hors droits` : null,
+    bien?.prixRecommande ? `Prix net vendeur recommandé : ${Number(bien.prixRecommande).toLocaleString('fr-FR')} €` : null,
+    bien?.modaliteVente || "Vente d'actif de gré à gré",
+    bien?.honorairesPct ? `Honoraires : ${bien.honorairesPct} % HT du prix Hors Droits` : null,
+    bien?.situationLocative || null,
   ].filter(Boolean);
-  s4.addText(bullets.map((b) => ({ text: b, options: { bullet: { code: '2022' }, breakLine: true } })), {
-    x: 0.7, y: 3.1, w: 11.9, h: 2, fontSize: 13, color: '2A2F36', fontFace: 'Arial', lineSpacingMultiple: 1.5,
-  });
+  fin2.addText(bullets.map((b) => ({ text: `•   ${b}\n`, options: {} })), { x: 0.75, y: 3.6, w: 7.9, h: 2.4, fontSize: 14, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.5 });
+  footer(fin2);
 
-  // --- Contact ---
-  const s5 = pptx.addSlide();
-  s5.background = { color: INK };
-  const hasHeadshot = Boolean(societe?.photoContact);
-  const contactX = hasHeadshot ? 2.5 : 0.7;
-  if (hasHeadshot) {
-    s5.addImage({ data: societe.photoContact, x: 0.7, y: 2.6, w: 1.5, h: 1.5, rounding: true });
-  }
-  s5.addText('Votre contact', { x: contactX, y: 2.6, w: 6, h: 0.6, fontSize: 14, color: 'D8CBB2', charSpacing: 2 });
-  s5.addText(societe?.contactNom || societe?.nom || '', { x: contactX, y: 3.1, w: 8, h: 0.7, fontSize: 26, bold: true, color: 'FFFFFF', fontFace: 'Georgia' });
-  s5.addText([societe?.telephone, societe?.email].filter(Boolean).join('   —   '), {
-    x: contactX, y: 3.9, w: 10, h: 0.5, fontSize: 13, color: 'D8CBB2',
+  // ------------------------------------- 04 — Modalités de cession & contact
+  divider('04', 'Modalités de cession\n& contacts');
+  const mod = pptx.addSlide();
+  mod.background = { color: PAPER };
+  brand(mod);
+  sectionHeader(mod, '04', 'Modalités de cession');
+  mod.addShape('rect', { x: 0.55, y: 1.8, w: 6.6, h: 0.42, fill: { color: INK } });
+  mod.addText([{ text: 'Processus de vente :', options: { bold: true, color: 'FFFFFF' } }, { text: `   ${bien?.modaliteVente || "Appel d'offres"}`, options: { color: 'FFFFFF' } }], { x: 0.65, y: 1.8, w: 6.4, h: 0.42, fontSize: 12, fontFace: 'Arial', valign: 'middle' });
+  const lignesCession = [
+    ['Type de consultation', 'Asset deal'],
+    ['Prix', prix ? `${prix.toLocaleString('fr-FR')} € net vendeur` : 'Nous consulter'],
+    ['Type de cession', "Vente d'actif en TVA"],
+    ['Honoraires de vente', bien?.honorairesPct ? `${bien.honorairesPct} % HT — charge acquéreur` : 'Nous consulter'],
+  ];
+  let cy = 2.35;
+  lignesCession.forEach(([k, v]) => {
+    mod.addText([{ text: `${k} : `, options: { bold: true } }, { text: v }], { x: 0.65, y: cy, w: 6.4, h: 0.35, fontSize: 12.5, color: INK, fontFace: 'Georgia' });
+    cy += 0.4;
   });
-  s5.addText(`© ${new Date().getFullYear()} ${societe?.nom || ''} — Confidentiel`, {
-    x: 0.7, y: 7.05, w: 8, h: 0.35, fontSize: 9, color: '8A93A0',
-  });
+  mod.addShape('rect', { x: 0.55, y: cy + 0.15, w: 6.6, h: 0.42, fill: { color: '1F8A5F' } });
+  mod.addText("CONTENU DE L'OFFRE INDICATIVE", { x: 0.65, y: cy + 0.15, w: 6.4, h: 0.42, fontSize: 12, bold: true, color: 'FFFFFF', fontFace: 'Arial', valign: 'middle' });
+  const offre = [
+    "Présentation de l'acquéreur",
+    "Prix de l'actif net vendeur (hors droits et honoraires de commercialisation)",
+    'Détail des sources de financement envisagées',
+    "Description et nature des audits souhaités pour l'acquisition",
+    "Processus interne de validation de l'investissement",
+    'Coordonnées de la personne à contacter et étude notariale',
+  ];
+  mod.addText(offre.map((o) => ({ text: `•   ${o}\n`, options: {} })), { x: 0.7, y: cy + 0.7, w: 6.4, h: 2.4, fontSize: 11.5, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.3 });
+  if (bien?.photoPrincipale) mod.addImage({ data: bien.photoPrincipale, x: 7.6, y: 1.8, w: 5.2, h: 4.6, sizing: { type: 'cover', w: 5.2, h: 4.6 } });
+  footer(mod);
+
+  // Contact
+  const contact = pptx.addSlide();
+  contact.background = { color: PAPER };
+  brand(contact);
+  if (societe?.photoContact) contact.addImage({ data: societe.photoContact, x: 1.3, y: 1.7, w: 2.4, h: 2.4, rounding: true, sizing: { type: 'cover', w: 2.4, h: 2.4 } });
+  contact.addText('VOTRE CONTACT', { x: 4.2, y: 2.6, w: 7.5, h: 0.9, fontSize: 44, bold: true, color: INK, fontFace: 'Arial' });
+  contact.addShape('rect', { x: 1.35, y: 4.35, w: 4.4, h: 0.14, fill: { color: INK } });
+  contact.addText((societe?.contactNom || '').toUpperCase(), { x: 1.35, y: 4.6, w: 4.6, h: 0.6, fontSize: 22, bold: true, color: INK, fontFace: 'Arial' });
+  if (societe?.telephone) contact.addText(societe.telephone, { x: 6.8, y: 4.45, w: 5.5, h: 0.5, fontSize: 20, color: INK, fontFace: 'Georgia' });
+  if (societe?.email) contact.addText(societe.email, { x: 6.8, y: 5.05, w: 5.8, h: 0.5, fontSize: 18, underline: true, color: INK, fontFace: 'Georgia' });
+  footer(contact);
 
   return pptx;
 }
 
-function sectionHeader(slide, numero, title, brand) {
-  slide.addText(numero, { x: 0.65, y: 0.42, w: 1.2, h: 0.7, fontSize: 26, bold: true, color: INK, fontFace: 'Georgia' });
-  slide.addShape('line', { x: 1.55, y: 0.75, w: 1.2, h: 0, line: { color: INK, width: 2 } });
-  slide.addText(title, { x: 2.9, y: 0.42, w: 8.5, h: 0.7, fontSize: 22, bold: true, color: INK, fontFace: 'Georgia' });
-  slide.addText(brand, { x: 9.5, y: 0.5, w: 3.1, h: 0.4, align: 'right', fontSize: 10, color: MUTED, charSpacing: 2 });
-  slide.addShape('line', { x: 0.7, y: 1.5, w: 11.9, h: 0, line: { color: LINE, width: 1 } });
-}
-
 export async function downloadImPptx(bien, societe) {
   const pptx = await generateImPptx(bien, societe);
-  await pptx.writeFile({ fileName: `IM_${(bien?.reference || bien?.adresse || 'bien').replace(/\s+/g, '_')}.pptx` });
+  const slug = (bien?.adresse || 'memorandum').replace(/[^\w-]+/g, '_').slice(0, 60);
+  await pptx.writeFile({ fileName: `IM_${slug}.pptx` });
 }

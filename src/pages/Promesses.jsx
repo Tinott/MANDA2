@@ -1,341 +1,260 @@
-
 import { useMemo, useState } from 'react';
-import { Plus, CalendarClock, Pencil, Trash2, AlertTriangle, UploadCloud, Loader2, Sparkles, AlertCircle } from 'lucide-react';
+import { Plus, CalendarClock, Pencil, Trash2, UploadCloud, Loader2, Sparkles, AlertCircle, FileText, BellRing } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { formatEUR, formatDate } from '../lib/calc';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, Stepper, BulkDeleteButton } from '../components/ui';
+import { formatEUR, formatDate, calcHonoraires } from '../lib/calc';
+import { hasApiKey, extractActeAI } from '../lib/ai';
+import { buildAlerts } from '../lib/relances';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, BulkDeleteButton, StatCard } from '../components/ui';
 
 const STATUTS = ['En cours', 'Conditions levées', 'Réitéré', 'Caduque'];
-
-function addDays(dateStr, n) {
-  if (!dateStr) return null;
-  const d = new Date(dateStr);
-  d.setDate(d.getDate() + n);
-  return d.toISOString().slice(0, 10);
-}
 
 function daysUntil(dateStr) {
   if (!dateStr) return null;
   return Math.round((new Date(dateStr) - new Date(new Date().toDateString())) / 86400000);
 }
 
-function deadlineTone(dateStr, resolved) {
-  if (!dateStr) return 'default';
-  if (resolved) return 'teal';
-  const d = daysUntil(dateStr);
-  if (d === null) return 'default';
-  if (d < 0) return 'rust';
-  if (d <= 10) return 'rust';
-  if (d <= 30) return 'brass';
-  return 'default';
-}
-
-function deadlineLabel(dateStr, resolved) {
-  if (!dateStr) return '—';
-  const d = daysUntil(dateStr);
-  if (resolved) return formatDate(dateStr);
-  if (d < 0) return `${formatDate(dateStr)} — dépassée`;
-  if (d === 0) return `${formatDate(dateStr)} — aujourd'hui`;
-  return `${formatDate(dateStr)} — J-${d}`;
+function DateCell({ date, resolved }) {
+  if (!date) return <span className="text-ink-faint">—</span>;
+  const d = daysUntil(date);
+  let tone = 'default';
+  if (!resolved) {
+    if (d < 0) tone = 'rust';
+    else if (d <= 15) tone = 'rust';
+    else if (d <= 30) tone = 'brass';
+  } else tone = 'teal';
+  const suffix = resolved ? '' : d < 0 ? ` · dépassée` : d === 0 ? ' · auj.' : ` · J-${d}`;
+  return <Badge tone={tone}>{formatDate(date)}{suffix}</Badge>;
 }
 
 const EMPTY = {
-  mandatId: '', bienAdresse: '', vendeur: '', acquereur: '', prixVente: '',
+  mandatId: '', bienAdresse: '', vendeur: '', acquereur: '', notaire: '', prixVente: '',
+  honorairesHT: '', redevable: 'acquereur', depotGarantie: '',
   dateSignaturePromesse: '', dateLimiteConditionsSuspensives: '', dateReiterationPrevue: '',
-  statut: 'En cours', notes: '',
+  dateProchaineRelance: '', statut: 'En cours', notes: '',
 };
 
 export default function Promesses() {
-  const { promesses, mandats, removePromesse } = useApp();
-  const [editing, setEditing] = useState(null); // null fermé | 'new' | objet
-  const [importOpen, setImportOpen] = useState(false);
+  const { promesses, societe, updatePromesse, removePromesse } = useApp();
+  const [editing, setEditing] = useState(null); // null | 'new' | objet
+  const [extractOpen, setExtractOpen] = useState(false);
 
-  const sorted = useMemo(() => {
-    const withScore = promesses.map((p) => {
-      const candidates = [p.dateLimiteConditionsSuspensives, p.dateReiterationPrevue]
-        .filter(Boolean)
-        .filter((d) => !['Réitéré', 'Caduque'].includes(p.statut));
-      const next = candidates.length ? candidates.sort()[0] : null;
-      return { ...p, _next: next };
-    });
-    return withScore.sort((a, b) => {
-      if (a._next && b._next) return a._next < b._next ? -1 : 1;
-      if (a._next) return -1;
-      if (b._next) return 1;
-      return new Date(b.createdAt) - new Date(a.createdAt);
-    });
-  }, [promesses]);
-
-  const alertes = sorted.filter((p) => p._next && daysUntil(p._next) !== null && daysUntil(p._next) <= 10 && !['Réitéré', 'Caduque'].includes(p.statut));
+  const enCours = promesses.filter((p) => ['En cours', 'Conditions levées'].includes(p.statut));
+  const volume = enCours.reduce((s, p) => s + (Number(p.prixVente) || 0), 0);
+  const honorairesAttendus = enCours.reduce((s, p) => s + (Number(p.honorairesHT) || 0), 0);
+  const alerts = buildAlerts({ promesses });
 
   return (
     <div>
       <PageHeader
-        eyebrow="Suivi juridique"
+        eyebrow="Pipeline sécurisé"
         title="Promesses de vente"
-        description="Une fois une promesse signée, suivez ici ses dates butoir — levée des conditions suspensives, réitération prévue — pour ne rien laisser filer."
+        description="Toutes les échéances d'un coup d'œil : conditions suspensives, réitération, relances client et honoraires attendus — avec alertes automatiques."
         action={
           <div className="flex gap-2">
-            <BulkDeleteButton type="promesse" items={sorted} label="promesse" />
-            <Button variant="outline" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer depuis un document</Button>
+            <BulkDeleteButton type="promesse" items={promesses} label="promesse" />
+            <Button variant="outline" onClick={() => setExtractOpen(true)}><UploadCloud size={15} /> Depuis une promesse PDF</Button>
             <Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouvelle promesse</Button>
           </div>
         }
       />
 
-      {alertes.length > 0 && (
-        <div className="mb-5 rounded-lg border border-rust/25 bg-rust-soft/50 px-4 py-3 flex items-start gap-2.5">
-          <AlertTriangle size={16} className="text-rust mt-0.5 shrink-0" />
-          <div className="text-[12.5px] text-ink">
-            <span className="font-medium">{alertes.length} échéance{alertes.length > 1 ? 's' : ''} à moins de 10 jours</span>
-            {' '}— {alertes.map((a) => a.bienAdresse || 'bien sans adresse').join(', ')}.
-          </div>
+      {promesses.length > 0 && (
+        <div className="grid sm:grid-cols-3 gap-4 mb-5">
+          <StatCard label="Promesses en cours" value={String(enCours.length)} />
+          <StatCard label="Volume sous promesse" value={formatEUR(volume)} />
+          <StatCard label="Honoraires attendus (HT)" value={formatEUR(honorairesAttendus)} />
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="mb-5 space-y-2">
+          {alerts.slice(0, 4).map((a, i) => (
+            <div key={i} className={`flex items-center gap-2.5 rounded-lg border px-4 py-2.5 text-[12.5px] ${a.level === 'critical' || a.level === 'urgent' ? 'bg-rust/5 border-rust/20 text-rust' : 'bg-brass-soft/40 border-brass/20 text-brass-deep'}`}>
+              <BellRing size={14} className="shrink-0" />
+              <span className="font-medium">{a.label}</span>
+              <span className="text-ink-faint hidden sm:inline">— {a.detail}</span>
+            </div>
+          ))}
         </div>
       )}
 
       {promesses.length === 0 ? (
-        <EmptyState
-          icon={CalendarClock}
-          title="Aucune promesse suivie"
-          description="Dès qu'une promesse ou un compromis est signé, enregistrez-le ici pour suivre ses échéances clés — manuellement, ou en déposant directement le document."
-          action={
-            <div className="flex gap-3">
-              <Button variant="brass" onClick={() => setImportOpen(true)}><UploadCloud size={15} /> Importer un document</Button>
-              <Button variant="outline" onClick={() => setEditing('new')}><Plus size={15} /> Saisir manuellement</Button>
-            </div>
-          }
-        />
+        <EmptyState icon={CalendarClock} title="Aucune promesse suivie" description="Ajoutez une promesse manuellement ou déposez le PDF signé : l'IA en extrait les parties, le prix, les dates et les honoraires." action={<Button variant="brass" onClick={() => setEditing('new')}><Plus size={15} /> Nouvelle promesse</Button>} />
       ) : (
-        <Card padded={false} className="overflow-hidden">
-          <table className="w-full text-[13px]">
+        <Card padded={false} className="overflow-x-auto">
+          <table className="w-full text-[12.5px] min-w-[1100px]">
             <thead>
-              <tr className="text-left text-[11px] uppercase tracking-wide text-ink-faint border-b border-line bg-paper-raised">
-                <th className="px-5 py-3 font-medium">Bien</th>
-                <th className="px-5 py-3 font-medium">Parties</th>
-                <th className="px-5 py-3 font-medium text-right">Prix</th>
-                <th className="px-5 py-3 font-medium">Conditions susp. — au plus tard le</th>
-                <th className="px-5 py-3 font-medium">Réitération prévue</th>
-                <th className="px-5 py-3 font-medium">Statut</th>
-                <th className="px-5 py-3 font-medium text-right">Actions</th>
+              <tr className="text-left text-[10.5px] uppercase tracking-wide text-ink-faint border-b border-line bg-paper-raised">
+                <th className="px-4 py-3 font-medium">Bien</th>
+                <th className="px-4 py-3 font-medium">Vendeur → Acquéreur</th>
+                <th className="px-4 py-3 font-medium text-right">Prix</th>
+                <th className="px-4 py-3 font-medium text-right">Honoraires HT</th>
+                <th className="px-4 py-3 font-medium">Signature</th>
+                <th className="px-4 py-3 font-medium">Cond. suspensives</th>
+                <th className="px-4 py-3 font-medium">Réitération</th>
+                <th className="px-4 py-3 font-medium">Relance</th>
+                <th className="px-4 py-3 font-medium">Statut</th>
+                <th className="px-4 py-3 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line-soft">
-              {sorted.map((p) => {
-                const resolved = ['Réitéré', 'Caduque'].includes(p.statut);
-                return (
-                  <tr key={p.id} className="hover:bg-paper-raised/60">
-                    <td className="px-5 py-3 text-ink max-w-[200px]">
-                      <div className="truncate">{p.bienAdresse || '—'}</div>
-                      {p.dateSignaturePromesse && (
-                        <div className="text-[11px] text-ink-faint">
-                          Signée le {formatDate(p.dateSignaturePromesse)} · rétractation SRU jusqu'au {formatDate(addDays(p.dateSignaturePromesse, 10))}
-                        </div>
-                      )}
-                    </td>
-                    <td className="px-5 py-3 text-ink-soft max-w-[160px]">
-                      <div className="truncate">{p.vendeur || '—'}</div>
-                      <div className="truncate text-ink-faint">{p.acquereur || '—'}</div>
-                    </td>
-                    <td className="px-5 py-3 text-right tabular text-ink">{p.prixVente ? formatEUR(p.prixVente) : '—'}</td>
-                    <td className="px-5 py-3">
-                      <Badge tone={deadlineTone(p.dateLimiteConditionsSuspensives, resolved)}>
-                        {deadlineLabel(p.dateLimiteConditionsSuspensives, resolved)}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3">
-                      <Badge tone={deadlineTone(p.dateReiterationPrevue, resolved)}>
-                        {deadlineLabel(p.dateReiterationPrevue, resolved)}
-                      </Badge>
-                    </td>
-                    <td className="px-5 py-3 text-ink-soft">{p.statut}</td>
-                    <td className="px-5 py-3">
-                      <div className="flex items-center justify-end gap-1">
-                        <button onClick={() => setEditing(p)} className="p-2 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Modifier">
-                          <Pencil size={15} />
-                        </button>
-                        <button onClick={() => removePromesse(p.id)} className="p-2 rounded-lg text-ink-faint hover:text-rust hover:bg-rust-soft" title="Supprimer">
-                          <Trash2 size={15} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })}
+              {promesses.map((p) => (
+                <tr key={p.id} className="hover:bg-paper-raised/60 align-top">
+                  <td className="px-4 py-3">
+                    <div className="font-medium text-ink">{p.bienAdresse || '—'}</div>
+                    {p.notaire && <div className="text-[11px] text-ink-faint">Notaire : {p.notaire}</div>}
+                  </td>
+                  <td className="px-4 py-3 text-ink-soft">{p.vendeur || '—'}<br /><span className="text-ink-faint">→</span> {p.acquereur || '—'}</td>
+                  <td className="px-4 py-3 text-right tabular font-medium text-ink">{formatEUR(p.prixVente)}</td>
+                  <td className="px-4 py-3 text-right tabular text-ink">
+                    {p.honorairesHT ? formatEUR(p.honorairesHT) : <span className="text-ink-faint">—</span>}
+                    {p.honorairesHT ? <div className="text-[10.5px] text-ink-faint">{formatEUR(Number(p.honorairesHT) * (1 + (societe.tauxTvaDefaut || 20) / 100))} TTC · {p.redevable === 'vendeur' ? 'vendeur' : 'acquéreur'}</div> : null}
+                  </td>
+                  <td className="px-4 py-3">{p.dateSignaturePromesse ? formatDate(p.dateSignaturePromesse) : '—'}</td>
+                  <td className="px-4 py-3"><DateCell date={p.dateLimiteConditionsSuspensives} resolved={['Conditions levées', 'Réitéré'].includes(p.statut)} /></td>
+                  <td className="px-4 py-3"><DateCell date={p.dateReiterationPrevue} resolved={p.statut === 'Réitéré'} /></td>
+                  <td className="px-4 py-3"><DateCell date={p.dateProchaineRelance} resolved={false} /></td>
+                  <td className="px-4 py-3">
+                    <Select value={p.statut} onChange={(e) => updatePromesse(p.id, { statut: e.target.value })} className="text-[11.5px] py-1">
+                      {STATUTS.map((s) => <option key={s}>{s}</option>)}
+                    </Select>
+                  </td>
+                  <td className="px-4 py-3 text-right whitespace-nowrap">
+                    <button onClick={() => setEditing(p)} className="p-1.5 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Modifier"><Pencil size={14} /></button>
+                    <button onClick={() => removePromesse(p.id)} className="p-1.5 rounded-lg text-ink-faint hover:text-rust hover:bg-rust/10" title="Supprimer"><Trash2 size={14} /></button>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </Card>
       )}
 
-      <PromesseEditor open={editing !== null} promesse={editing === 'new' ? null : editing} mandats={mandats} onClose={() => setEditing(null)} />
-      <ImportWizard
-        open={importOpen}
-        onClose={() => setImportOpen(false)}
-        onExtracted={(fields) => { setImportOpen(false); setEditing({ ...EMPTY, ...fields }); }}
-      />
+      {editing && <PromesseModal initial={editing === 'new' ? EMPTY : editing} onClose={() => setEditing(null)} />}
+      {extractOpen && <ExtractModal onClose={() => setExtractOpen(false)} onExtracted={(f) => { setExtractOpen(false); setEditing({ ...EMPTY, ...f }); }} />}
     </div>
   );
 }
 
-// --- Import depuis un document — lecture réelle du PDF (pdf.js) + reconnaissance
-// de motifs, sans IA : le prix, les parties, l'adresse et les deux dates
-// butoir sont extraits automatiquement. Aucune donnée n'est enregistrée
-// avant relecture : l'extraction ouvre directement le formulaire de saisie,
-// pré-rempli, prêt à être corrigé puis enregistré.
-function ImportWizard({ open, onClose, onExtracted }) {
-  const [status, setStatus] = useState('idle');
-  const [fileName, setFileName] = useState('');
-  const [error, setError] = useState('');
+function PromesseModal({ initial, onClose }) {
+  const { mandats, societe, addPromesse, updatePromesse } = useApp();
+  const [form, setForm] = useState(initial);
+  const isNew = !initial.id;
+  const set = (patch) => setForm((f) => ({ ...f, ...patch }));
 
-  function reset() { setStatus('idle'); setFileName(''); setError(''); }
-  function close() { reset(); onClose(); }
-
-  async function handleFile(e) {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    setFileName(file.name);
-    setStatus('reading');
-    setError('');
-    try {
-      const { extractPdfText, parsePromesseFields } = await import('../lib/pdfExtract');
-      const text = await extractPdfText(file);
-      const fields = parsePromesseFields(text);
-      const notesParts = [];
-      if (fields.notaire) notesParts.push(`Notaire : ${fields.notaire}`);
-      if (fields.reference) notesParts.push(`Référence : ${fields.reference}`);
-      onExtracted({
-        bienAdresse: fields.adresseBien || '',
-        vendeur: fields.vendeur || '',
-        acquereur: fields.acquereur || '',
-        prixVente: fields.prixVente || '',
-        dateSignaturePromesse: fields.dateSignaturePromesse || '',
-        dateLimiteConditionsSuspensives: fields.dateLimiteConditionsSuspensives || '',
-        dateReiterationPrevue: fields.dateReiterationPrevue || '',
-        notes: notesParts.join(' — '),
-      });
-    } catch (err) {
-      setStatus('error');
-      setError("Impossible de lire ce fichier — vérifiez qu'il s'agit bien d'un PDF.");
+  function linkMandat(id) {
+    const m = mandats.find((x) => x.id === id);
+    const patch = { mandatId: id };
+    if (m) {
+      patch.bienAdresse = form.bienAdresse || m.adresse || '';
+      patch.vendeur = form.vendeur || m.client || '';
+      if (!form.honorairesHT && (form.prixVente || m.prixVente)) {
+        patch.honorairesHT = Math.round(calcHonoraires(societe.bareme, form.prixVente || m.prixVente));
+      }
     }
+    set(patch);
   }
 
-  return (
-    <Modal open={open} onClose={close} title="Importer une promesse depuis un document">
-      <div className="space-y-4">
-        <p className="text-[13px] text-ink-soft">
-          Déposez le PDF de la promesse ou du compromis signé. Le prix, les parties, l'adresse et les
-          dates clés (conditions suspensives, réitération prévue) sont recherchés automatiquement dans
-          le texte — sans IA, sans envoi à un service externe. Le formulaire s'ouvrira pré-rempli pour
-          que vous vérifiiez et corrigiez avant d'enregistrer.
-        </p>
-        <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line rounded-xl py-10 cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
-          {status === 'reading' ? (
-            <>
-              <Loader2 className="animate-spin text-brass" size={26} />
-              <span className="text-[12.5px] text-ink-soft">Lecture du document…</span>
-            </>
-          ) : (
-            <>
-              <UploadCloud className="text-ink-faint" size={26} />
-              <span className="text-[13px] text-ink font-medium">Déposer un PDF ou cliquer pour parcourir</span>
-              <span className="text-[11.5px] text-ink-faint">{fileName || 'Promesse ou compromis de vente signé'}</span>
-            </>
-          )}
-          <input type="file" accept="application/pdf" className="hidden" onChange={handleFile} />
-        </label>
-        {status === 'error' && (
-          <div className="flex items-center gap-2 text-[12.5px] text-rust"><AlertCircle size={14} /> {error}</div>
-        )}
-      </div>
-    </Modal>
-  );
-}
-
-function PromesseEditor({ open, promesse, mandats, onClose }) {
-  const { addPromesse, updatePromesse } = useApp();
-  const isEdit = Boolean(promesse?.id);
-  const [form, setForm] = useState(promesse || EMPTY);
-  const [openedFor, setOpenedFor] = useState(promesse);
-
-  if (open && promesse !== openedFor) {
-    setForm(promesse || EMPTY);
-    setOpenedFor(promesse);
-  }
-  if (!open) return null;
-
-  const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
-
-  function applyMandat(id) {
-    const m = mandats.find((mm) => mm.id === id);
-    setForm((f) => ({
-      ...f,
-      mandatId: id,
-      bienAdresse: m ? m.adresse : f.bienAdresse,
-      vendeur: m ? m.client : f.vendeur,
-      prixVente: m ? m.prixVente : f.prixVente,
-    }));
+  function autoHonoraires() {
+    if (!form.prixVente) return;
+    set({ honorairesHT: Math.round(calcHonoraires(societe.bareme, form.prixVente)) });
   }
 
-  function submit(e) {
+  function save(e) {
     e.preventDefault();
-    const payload = { ...form, prixVente: Number(form.prixVente) || 0 };
-    if (isEdit) {
-      updatePromesse(promesse.id, payload);
-    } else {
-      addPromesse(payload);
-    }
+    const rec = { ...form, prixVente: Number(form.prixVente) || 0, honorairesHT: Number(form.honorairesHT) || 0 };
+    if (isNew) addPromesse(rec); else updatePromesse(initial.id, rec);
     onClose();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title={isEdit ? 'Modifier la promesse' : 'Nouvelle promesse de vente'} width="max-w-xl">
-      <form onSubmit={submit} className="space-y-4">
-        {mandats.length > 0 && (
-          <Field label="Lier à un mandat" hint="Optionnel — pré-remplit bien, client et prix">
-            <Select value={form.mandatId} onChange={(e) => applyMandat(e.target.value)}>
-              <option value="">Aucun</option>
-              {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse}</option>)}
-            </Select>
-          </Field>
-        )}
-        <Field label="Adresse du bien" required>
-          <Input value={form.bienAdresse} onChange={set('bienAdresse')} placeholder="Numéro, rue, code postal, ville" />
+    <Modal open title={isNew ? "Nouvelle promesse" : "Modifier la promesse"} onClose={onClose} width="max-w-3xl">
+      <form onSubmit={save} className="grid sm:grid-cols-2 gap-4">
+        <Field label="Mandat associé (facultatif)">
+          <Select value={form.mandatId} onChange={(e) => linkMandat(e.target.value)}>
+            <option value="">— Aucun —</option>
+            {mandats.map((m) => <option key={m.id} value={m.id}>{m.adresse || m.client}</option>)}
+          </Select>
         </Field>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Vendeur"><Input value={form.vendeur} onChange={set('vendeur')} /></Field>
-          <Field label="Acquéreur"><Input value={form.acquereur} onChange={set('acquereur')} /></Field>
-        </div>
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Prix de vente"><Input type="number" value={form.prixVente} onChange={set('prixVente')} /></Field>
-          <Field label="Statut">
-            <Select value={form.statut} onChange={set('statut')}>
-              {STATUTS.map((s) => <option key={s}>{s}</option>)}
-            </Select>
-          </Field>
-        </div>
-        <Field label="Date de signature de la promesse" hint="Le délai de rétractation SRU (10 jours) sera calculé automatiquement">
-          <Input type="date" value={form.dateSignaturePromesse} onChange={set('dateSignaturePromesse')} />
+        <Field label="Adresse du bien"><Input value={form.bienAdresse} onChange={(e) => set({ bienAdresse: e.target.value })} required /></Field>
+        <Field label="Vendeur"><Input value={form.vendeur} onChange={(e) => set({ vendeur: e.target.value })} /></Field>
+        <Field label="Acquéreur"><Input value={form.acquereur} onChange={(e) => set({ acquereur: e.target.value })} /></Field>
+        <Field label="Notaire"><Input value={form.notaire || ''} onChange={(e) => set({ notaire: e.target.value })} placeholder="Maître …, notaire à …" /></Field>
+        <Field label="Prix de vente (€)"><Input type="number" value={form.prixVente} onChange={(e) => set({ prixVente: e.target.value })} /></Field>
+        <Field label={<span>Honoraires HT (€) <button type="button" onClick={autoHonoraires} className="text-brass text-[11px] underline ml-1">calculer au barème</button></span>}>
+          <Input type="number" value={form.honorairesHT} onChange={(e) => set({ honorairesHT: e.target.value })} />
         </Field>
-        {form.dateSignaturePromesse && (
-          <div className="text-[11.5px] text-ink-faint -mt-2">
-            Fin du délai de rétractation SRU : {formatDate(addDays(form.dateSignaturePromesse, 10))}
-          </div>
-        )}
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Conditions suspensives — au plus tard le" hint="Date butoir de levée des CS">
-            <Input type="date" value={form.dateLimiteConditionsSuspensives} onChange={set('dateLimiteConditionsSuspensives')} />
-          </Field>
-          <Field label="Date de réitération prévue" hint="Signature de l'acte authentique">
-            <Input type="date" value={form.dateReiterationPrevue} onChange={set('dateReiterationPrevue')} />
-          </Field>
-        </div>
-        <Field label="Notes">
-          <Textarea value={form.notes} onChange={set('notes')} placeholder="Conditions suspensives en cours, contact notaire…" />
+        <Field label="Honoraires à la charge de">
+          <Select value={form.redevable} onChange={(e) => set({ redevable: e.target.value })}>
+            <option value="acquereur">Acquéreur</option>
+            <option value="vendeur">Vendeur</option>
+          </Select>
         </Field>
-        <div className="flex justify-end gap-3 pt-2">
-          <Button type="button" variant="ghost" onClick={onClose}>Annuler</Button>
-          <Button type="submit" variant="brass">{isEdit ? 'Enregistrer les modifications' : 'Créer la promesse'}</Button>
+        <Field label="Dépôt de garantie (€)"><Input type="number" value={form.depotGarantie || ''} onChange={(e) => set({ depotGarantie: e.target.value })} /></Field>
+        <Field label="Date de signature de la promesse"><Input type="date" value={form.dateSignaturePromesse} onChange={(e) => set({ dateSignaturePromesse: e.target.value })} /></Field>
+        <Field label="Date limite des conditions suspensives"><Input type="date" value={form.dateLimiteConditionsSuspensives} onChange={(e) => set({ dateLimiteConditionsSuspensives: e.target.value })} /></Field>
+        <Field label="Date de réitération prévue"><Input type="date" value={form.dateReiterationPrevue} onChange={(e) => set({ dateReiterationPrevue: e.target.value })} /></Field>
+        <Field label="Prochaine relance client"><Input type="date" value={form.dateProchaineRelance || ''} onChange={(e) => set({ dateProchaineRelance: e.target.value })} /></Field>
+        <Field label="Statut">
+          <Select value={form.statut} onChange={(e) => set({ statut: e.target.value })}>{STATUTS.map((s) => <option key={s}>{s}</option>)}</Select>
+        </Field>
+        <div className="sm:col-span-2">
+          <Field label="Notes de suivi"><Textarea rows={3} value={form.notes} onChange={(e) => set({ notes: e.target.value })} placeholder="Banque de l'acquéreur, pièces attendues, points d'attention…" /></Field>
+        </div>
+        <div className="sm:col-span-2 flex justify-end gap-2">
+          <Button variant="outline" type="button" onClick={onClose}>Annuler</Button>
+          <Button variant="brass" type="submit">{isNew ? 'Créer la promesse' : 'Enregistrer'}</Button>
         </div>
       </form>
+    </Modal>
+  );
+}
+
+function ExtractModal({ onClose, onExtracted }) {
+  const { societe } = useApp();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  async function handleFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setBusy(true); setError('');
+    try {
+      const { extractPdfText, parseActeFields } = await import('../lib/pdfExtract');
+      const text = await extractPdfText(file);
+      let fields = {};
+      if (hasApiKey(societe)) {
+        const ai = await extractActeAI(societe, text);
+        fields = {
+          bienAdresse: ai.bienAdresse || '', vendeur: ai.vendeur || '', acquereur: ai.acquereur || '',
+          prixVente: ai.prixVente || '', notaire: ai.notaire || '',
+          dateSignaturePromesse: ai.dateSignature || '', dateReiterationPrevue: ai.dateReiteration || '',
+          honorairesHT: ai.honorairesMontantTTC ? Math.round(ai.honorairesMontantTTC / (1 + (societe.tauxTvaDefaut || 20) / 100)) : '',
+          redevable: ai.honorairesRedevable || 'acquereur',
+        };
+      } else {
+        const h = parseActeFields(text);
+        fields = { prixVente: h.prix || '', vendeur: h.vendeur || '', acquereur: h.acquereur || '' };
+      }
+      onExtracted(fields);
+    } catch (err) {
+      setError(err.message);
+    }
+    setBusy(false);
+  }
+
+  return (
+    <Modal open title="Extraire depuis une promesse PDF" onClose={onClose}>
+      <p className="text-[13px] text-ink-soft mb-4">
+        Déposez la promesse signée : {hasApiKey(societe) ? "l'IA" : 'une lecture heuristique (ajoutez une clé API dans Paramètres pour une extraction complète)'} en extrait les parties, le prix, les dates et les honoraires. Relisez systématiquement avant d'enregistrer.
+      </p>
+      {error && <div className="mb-3 flex items-center gap-2 text-[12.5px] text-rust"><AlertCircle size={14} /> {error}</div>}
+      <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line rounded-xl py-10 cursor-pointer hover:border-brass/50 hover:bg-brass-soft/20">
+        {busy ? <Loader2 size={22} className="animate-spin text-brass" /> : <FileText size={22} className="text-ink-faint" />}
+        <span className="text-[13px] text-ink-soft">{busy ? 'Lecture et extraction en cours…' : 'Cliquer pour choisir le PDF'}</span>
+        <input type="file" accept="application/pdf" className="hidden" onChange={handleFile} disabled={busy} />
+      </label>
+      {hasApiKey(societe) && <div className="mt-3 flex items-center gap-1.5 text-[11.5px] text-ink-faint"><Sparkles size={12} className="text-brass" /> Extraction par IA activée</div>}
     </Modal>
   );
 }

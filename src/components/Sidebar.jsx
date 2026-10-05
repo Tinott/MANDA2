@@ -2,7 +2,7 @@
 import { NavLink } from 'react-router-dom';
 import {
   LayoutGrid, FileText, Receipt, BookOpen, Wallet, CalendarClock,
-  FileStack, BarChart3, Settings, Building2, Users, Trash2, TrendingUp, FileSignature,
+  FileStack, BarChart3, Settings, Building2, Users, Trash2, TrendingUp, FileSignature, Mail, Bot,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 
@@ -17,6 +17,8 @@ const NAV = [
   { to: '/comptabilite', label: 'Comptabilité', icon: BookOpen },
   { to: '/tresorerie', label: 'Trésorerie', icon: Wallet },
   { to: '/im', label: 'Memorandums (IM)', icon: FileStack },
+  { to: '/mail', label: 'Boîte mail', icon: Mail },
+  { to: '/assistant', label: 'Copilote IA', icon: Bot },
   { to: '/promesses', label: 'Promesses de vente', icon: CalendarClock },
   { to: '/rapports', label: 'Rapports', icon: BarChart3 },
 ];

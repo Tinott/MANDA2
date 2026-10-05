@@ -4,8 +4,9 @@ import { Plus, FileText, Sparkles, Download, Trash2, Pencil, UploadCloud, Loader
 import { useApp } from '../context/AppContext';
 import { calcHonoraires, repartitionRedevable, tvaMontant, nextInvoiceNumber, clientNumero, formatEUR, formatDate } from '../lib/calc';
 import { uid } from '../lib/storage';
+import { hasApiKey, extractActeAI } from '../lib/ai';
 import {
-  PageHeader, Card, Button, Modal, Field, Input, Select, Badge, statusTone, EmptyState, Stepper, Stamp, BulkDeleteButton,
+  PageHeader, Card, Button, Modal, Field, Input, Select, EmptyState, Stepper, Stamp, BulkDeleteButton,
 } from '../components/ui';
 
 const STATUTS = ['Brouillon', 'Émise', 'Envoyée', 'Payée', 'En retard'];
@@ -313,21 +314,49 @@ function ActeWizard({ open, onClose, onEdit }) {
     try {
       const { extractPdfText, parseActeFields } = await import('../lib/pdfExtract');
       const text = await extractPdfText(file);
-      const fields = parseActeFields(text);
-      setExtracted({
-        prixVente: fields.prixVente || '',
-        dateSignature: fields.dateSignature || '',
-        vendeur: fields.vendeur || '',
-        acquereur: fields.acquereur || '',
-        adresseBien: fields.adresseBien || '',
-        reference: fields.reference || '',
-        notaire: fields.notaire || '',
-        mandatRef: '',
-        confidence: fields.confidence,
-      });
+
+      // Avec une clé API (Paramètres → Intégrations), l'extraction passe par
+      // Claude : fiable sur les actes longs, les montants en lettres et les
+      // promesses atypiques. Sans clé — ou si l'appel échoue — repli
+      // automatique sur l'extraction locale par motifs.
+      let fields = null;
+      let viaIA = false;
+      if (hasApiKey(societe)) {
+        try {
+          const ai = await extractActeAI(societe, text);
+          fields = {
+            prixVente: ai.prixVente ?? '',
+            dateSignature: ai.dateSignature || '',
+            vendeur: ai.vendeur || '',
+            acquereur: ai.acquereur || '',
+            adresseBien: ai.bienAdresse || '',
+            reference: ai.reference || '',
+            notaire: ai.notaire || '',
+            mandatRef: ai.numeroMandat || '',
+          };
+          viaIA = true;
+        } catch {
+          fields = null;
+        }
+      }
+      if (!fields) {
+        const loc = parseActeFields(text);
+        fields = {
+          prixVente: loc.prixVente || '',
+          dateSignature: loc.dateSignature || '',
+          vendeur: loc.vendeur || '',
+          acquereur: loc.acquereur || '',
+          adresseBien: loc.adresseBien || '',
+          reference: loc.reference || '',
+          notaire: loc.notaire || '',
+          mandatRef: '',
+          confidence: loc.confidence,
+        };
+      }
+      setExtracted({ ...fields, viaIA });
       setStatus('done');
       setStep(1);
-    } catch (err) {
+    } catch {
       setStatus('error');
     }
   }
@@ -399,7 +428,10 @@ function ActeWizard({ open, onClose, onEdit }) {
       {step === 1 && extracted && (
         <div className="space-y-4">
           <p className="text-[12.5px] text-ink-soft flex items-center gap-1.5">
-            <Sparkles size={13} className="text-brass" /> Données extraites — corrigez si nécessaire avant de continuer.
+            <Sparkles size={13} className="text-brass" />
+            {extracted.viaIA
+              ? 'Données extraites par l\u2019IA — corrigez si nécessaire avant de continuer.'
+              : 'Données extraites — corrigez si nécessaire avant de continuer.'}
           </p>
           <div className="grid grid-cols-2 gap-4">
             <Field label="Prix de vente" required>

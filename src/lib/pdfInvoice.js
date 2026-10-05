@@ -1,5 +1,15 @@
 import { jsPDF } from 'jspdf';
-import { formatEUR, formatDate } from './calc';
+import { formatEUR as _formatEUR, formatDate } from './calc';
+
+// Les polices standard de jsPDF (WinAnsi) ne contiennent pas l'espace fine
+// insécable (U+202F) produite par Intl en fr-FR — elle s'imprimerait comme
+// un caractère parasite. On la remplace par l'insécable classique (U+00A0).
+const formatEUR = (n) => _formatEUR(n).replace(/\u202f/g, '\u00a0');
+
+// Facture d'honoraires — version conforme : identification complète de la
+// société (SIRET, RCS, TVA intra, carte T, garantie financière, RCP), date
+// d'échéance, conditions de règlement, pénalités de retard (3× taux légal),
+// indemnité forfaitaire de recouvrement de 40 €, absence d'escompte.
 
 export function generateInvoicePdf(facture, societe) {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' });
@@ -13,25 +23,24 @@ export function generateInvoicePdf(facture, societe) {
   doc.text(societe?.nom || 'SARL', marginX, y);
 
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(9);
+  doc.setFontSize(8.5);
   doc.setTextColor(90, 95, 105);
-  y += 18;
+  y += 17;
   [
     societe?.adresse,
-    `SIRET ${societe?.siret || '—'}`,
-    societe?.carteT ? `Carte T n° ${societe.carteT}` : null,
-    societe?.cpi ? `CPI ${societe.cpi}` : null,
+    [societe?.siret ? `SIRET ${societe.siret}` : null, societe?.rcs ? `RCS ${societe.rcs}` : null].filter(Boolean).join(' — ') || null,
+    societe?.tvaIntra ? `TVA intracommunautaire ${societe.tvaIntra}` : null,
+    societe?.carteT ? `Carte professionnelle Transaction n° ${societe.carteT}` : societe?.cpi ? `CPI ${societe.cpi}` : null,
+    societe?.rcp ? `RCP / Garantie : ${societe.rcp}` : null,
+    [societe?.telephone, societe?.email].filter(Boolean).join(' — ') || null,
   ]
     .filter(Boolean)
-    .forEach((line) => {
-      doc.text(line, marginX, y);
-      y += 12;
-    });
+    .forEach((line) => { doc.text(line, marginX, y); y += 11; });
 
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(26);
   doc.setTextColor(ink);
-  doc.text('FACTURE', 400, 74, { align: 'left' });
+  doc.text('FACTURE', 400, 74);
   doc.setFont('helvetica', 'normal');
   doc.setFontSize(10);
   doc.setTextColor(90, 95, 105);
@@ -39,15 +48,13 @@ export function generateInvoicePdf(facture, societe) {
   doc.text(`N° ${facture.numero}`, 400, hy); hy += 14;
   doc.text(`Date d'émission : ${formatDate(facture.dateEmission)}`, 400, hy); hy += 14;
   if (facture.clientNumero) { doc.text(`N° client : ${facture.clientNumero}`, 400, hy); hy += 14; }
-  if (facture.dateEcheance) { doc.text(`Échéance : ${formatDate(facture.dateEcheance)}`, 400, hy); hy += 14; }
+  doc.text(`Échéance : ${facture.dateEcheance ? formatDate(facture.dateEcheance) : 'à réception'}`, 400, hy); hy += 14;
 
-  y = 150;
+  y = Math.max(y + 10, 158);
   doc.setDrawColor(226, 222, 212);
   doc.line(marginX, y, 547, y);
   y += 22;
 
-  // Référence — mandat / bien / notaire, à l'image d'une facture de commission
-  // d'agence transmise à un office notarial.
   if (facture.refTitre || facture.mandatRef || facture.notaire) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(9.5);
@@ -56,7 +63,7 @@ export function generateInvoicePdf(facture, societe) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(8.5);
     doc.setTextColor(90, 95, 105);
-    if (facture.mandatRef) { doc.text(`Avenant au mandat n° ${facture.mandatRef}${facture.bienAdresse ? ` — Bien sis ${facture.bienAdresse}` : ''}`, marginX, y); y += 12; }
+    if (facture.mandatRef) { doc.text(`Mandat n° ${facture.mandatRef}${facture.bienAdresse ? ` — Bien sis ${facture.bienAdresse}` : ''}`, marginX, y); y += 12; }
     if (facture.notaire) { doc.text(`Acte reçu par ${facture.notaire}`, marginX, y); y += 12; }
     y += 10;
   }
@@ -69,10 +76,7 @@ export function generateInvoicePdf(facture, societe) {
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(60, 66, 75);
   doc.text(facture.client || '—', marginX, y);
-  if (facture.clientAdresse) {
-    y += 13;
-    doc.text(facture.clientAdresse, marginX, y);
-  }
+  if (facture.clientAdresse) { y += 13; doc.text(facture.clientAdresse, marginX, y, { maxWidth: 300 }); }
 
   if (facture.bienAdresse && !facture.refTitre) {
     y += 24;
@@ -82,7 +86,7 @@ export function generateInvoicePdf(facture, societe) {
     y += 14;
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(60, 66, 75);
-    doc.text(`Honoraires — ${facture.bienAdresse}`, marginX, y);
+    doc.text(`Honoraires de négociation — ${facture.bienAdresse}`, marginX, y, { maxWidth: 480 });
   }
 
   y += 32;
@@ -102,10 +106,7 @@ export function generateInvoicePdf(facture, societe) {
   doc.setFont('helvetica', 'normal');
   lignes.forEach((l, i) => {
     const rowY = y + i * 22 + 16;
-    if (i % 2 === 1) {
-      doc.setFillColor(247, 246, 242);
-      doc.rect(marginX, y + i * 22, 499, 22, 'F');
-    }
+    if (i % 2 === 1) { doc.setFillColor(247, 246, 242); doc.rect(marginX, y + i * 22, 499, 22, 'F'); }
     const negatif = Number(l.montant) < 0;
     doc.setTextColor(negatif ? 172 : 40, negatif ? 82 : 44, negatif ? 54 : 50);
     doc.text(l.libelle, marginX + 10, rowY, { maxWidth: 340 });
@@ -126,7 +127,7 @@ export function generateInvoicePdf(facture, societe) {
     y += 18;
   };
   row('Total HT', facture.montantHT);
-  row(`TVA (${facture.tauxTva ?? 20}%)`, facture.montantTVA);
+  row(`TVA (${facture.tauxTva ?? 20} %)`, facture.montantTVA);
   y += 4;
   row('Total TTC', facture.montantTTC, true);
 
@@ -135,7 +136,6 @@ export function generateInvoicePdf(facture, societe) {
   doc.line(marginX, y, 547, y);
   y += 16;
 
-  // Règlement & coordonnées bancaires
   doc.setFont('helvetica', 'bold');
   doc.setFontSize(8.5);
   doc.setTextColor(20, 24, 29);
@@ -144,32 +144,30 @@ export function generateInvoicePdf(facture, societe) {
   y += 12;
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(90, 95, 105);
-  doc.text(`Virement bancaire${facture.echeanceLabel ? ` — ${facture.echeanceLabel}` : ' — à réception'}`, marginX, y, { maxWidth: 230 });
+  doc.text(`Virement bancaire${facture.echeanceLabel ? ` — ${facture.echeanceLabel}` : ' — à réception de facture'}`, marginX, y, { maxWidth: 230 });
   const banque = [
     societe?.banque ? `Banque : ${societe.banque}` : null,
     societe?.iban ? `IBAN : ${societe.iban}` : null,
     societe?.bic ? `BIC : ${societe.bic}` : null,
   ].filter(Boolean);
   banque.forEach((line, i) => doc.text(line, 300, y + i * 11));
-  y += Math.max(24, banque.length * 11 + 6);
+  y += Math.max(26, banque.length * 11 + 8);
 
   doc.setDrawColor(226, 222, 212);
   doc.line(marginX, y, 547, y);
-  y += 16;
+  y += 14;
   doc.setFont('helvetica', 'normal');
-  doc.setFontSize(7.5);
+  doc.setFontSize(7);
   doc.setTextColor(120, 126, 135);
   const mentions = [
     facture.tauxTva === 0 ? 'TVA non applicable, art. 293 B du CGI.' : 'TVA acquittée sur les débits.',
-    societe?.rcp ? `Assurance RC Pro : ${societe.rcp}.` : null,
-    societe?.rcs ? `RCS ${societe.rcs}.` : null,
-    societe?.capitalSocial ? `Capital social ${formatEUR(societe.capitalSocial)}.` : null,
-    societe?.tvaIntra ? `TVA intracommunautaire ${societe.tvaIntra}.` : null,
+    "En cas de retard de paiement, pénalités exigibles sans qu'un rappel soit nécessaire au taux de trois fois le taux d'intérêt légal, et indemnité forfaitaire pour frais de recouvrement de 40 € (art. L.441-10 et D.441-5 C. com.).",
+    'Aucun escompte pour paiement anticipé.',
     facture.redevable ? `Honoraires à la charge : ${facture.redevable}.` : null,
-  ]
-    .filter(Boolean)
-    .join('  •  ');
-  doc.text(mentions, marginX, y, { maxWidth: 499 });
+    societe?.capitalSocial ? `Capital social ${formatEUR(societe.capitalSocial)}.` : null,
+    "Déclarant ne pouvoir recevoir ni détenir d'autres fonds, effets ou valeurs que ceux représentatifs de sa rémunération.",
+  ].filter(Boolean).join('  ');
+  doc.text(doc.splitTextToSize(mentions, 499), marginX, y);
 
   return doc;
 }
