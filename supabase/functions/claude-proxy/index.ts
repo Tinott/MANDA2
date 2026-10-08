@@ -13,6 +13,9 @@
 //     fonction (vérification du jeton Supabase) ;
 //   - modèles limités à une liste blanche, max_tokens plafonné, taille de
 //     requête plafonnée — personne ne peut faire exploser la facture ;
+//   - seul l'outil « web_search » d'Anthropic est autorisé (recherche web
+//     côté serveur pour les fiches prospect, avis de valeur et veille),
+//     avec au plus 5 recherches par requête ;
 //   - pensez aussi à définir un plafond de dépense sur console.anthropic.com.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -22,7 +25,7 @@ const MODELES_AUTORISES = new Set([
   "claude-haiku-4-5-20251001",
   "claude-opus-5-5",
 ]);
-const MAX_TOKENS_PLAFOND = 4096;
+const MAX_TOKENS_PLAFOND = 8192;
 const TAILLE_REQUETE_MAX = 400_000; // ~400 Ko de JSON
 
 const corsHeaders = {
@@ -81,6 +84,7 @@ Deno.serve(async (req) => {
     max_tokens?: number;
     system?: string;
     messages?: unknown;
+    tools?: Array<{ type?: string; name?: string; max_uses?: number }>;
   };
   try {
     body = JSON.parse(raw);
@@ -97,6 +101,17 @@ Deno.serve(async (req) => {
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return json({ error: { message: "messages manquants." } }, 400);
   }
+  // Outils : uniquement la recherche web d'Anthropic, volume limité.
+  const tools = Array.isArray(body.tools)
+    ? body.tools
+        .filter((t) => t && t.type === "web_search_20250305")
+        .slice(0, 1)
+        .map((t) => ({
+          type: "web_search_20250305",
+          name: "web_search",
+          max_uses: Math.min(Math.max(1, Number(t.max_uses) || 3), 5),
+        }))
+    : undefined;
 
   // --- 4. Appel Anthropic avec la clé serveur. ---
   const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -111,6 +126,7 @@ Deno.serve(async (req) => {
       max_tokens: maxTokens,
       system: body.system || undefined,
       messages: body.messages,
+      ...(tools && tools.length ? { tools } : {}),
     }),
   });
   const data = await res.json().catch(() => ({

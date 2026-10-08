@@ -1,4 +1,5 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { Mail as MailIcon, RefreshCw, Sparkles, Send, Users, Loader2, Plug, LogOut, AlertCircle, PenLine, X, FolderOpen } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { connectGmail, gmailConnected, gmailDisconnect, gmailList, gmailSendReply, gmailSendNew, gmailImportContacts } from '../lib/email/gmail';
@@ -61,7 +62,20 @@ export default function Mail() {
   const [importing, setImporting] = useState(false);
   const [sent, setSent] = useState(false);
   const [composeOpen, setComposeOpen] = useState(false);
+  const [composeInit, setComposeInit] = useState(null);
   const [, force] = useState(0);
+  const location = useLocation();
+
+  // Arrivée depuis une alerte (« Rédiger la relance ») : on ouvre le composer
+  // avec la consigne préremplie, puis on nettoie l'état de navigation pour ne
+  // pas rouvrir à chaque retour sur la page.
+  useEffect(() => {
+    const c = location.state?.compose;
+    if (!c) return;
+    window.history.replaceState({}, '');
+    const t = setTimeout(() => { setComposeInit(c); setComposeOpen(true); }, 0); // hors du rendu
+    return () => clearTimeout(t);
+  }, [location.state]);
 
   const connected = gmailConnected() || outlookConnected();
   const snapshot = useMemo(() => buildAppSnapshot(app), [app]);
@@ -235,7 +249,7 @@ export default function Mail() {
         </div>
       )}
 
-      <ComposeModal open={composeOpen} onClose={() => setComposeOpen(false)} snapshot={snapshot} />
+      <ComposeModal key={composeInit?.consigne || 'vierge'} open={composeOpen} onClose={() => { setComposeOpen(false); setComposeInit(null); }} snapshot={snapshot} initial={composeInit} />
     </div>
   );
 }
@@ -244,13 +258,13 @@ export default function Mail() {
 // Composer — nouveau message avec sélection des contacts de l'appli (chips +
 // suggestions), brouillon IA sur consigne, envoi Gmail ou Outlook.
 // ---------------------------------------------------------------------------
-function ComposeModal({ open, onClose, snapshot }) {
+function ComposeModal({ open, onClose, snapshot, initial }) {
   const { societe, contacts } = useApp();
-  const [to, setTo] = useState([]); // adresses email retenues
+  const [to, setTo] = useState(initial?.to || []); // adresses email retenues
   const [input, setInput] = useState('');
-  const [subject, setSubject] = useState('');
+  const [subject, setSubject] = useState(initial?.subject || '');
   const [body, setBody] = useState('');
-  const [consigne, setConsigne] = useState('');
+  const [consigne, setConsigne] = useState(initial?.consigne || '');
   const [provider, setProvider] = useState('');
   const [busy, setBusy] = useState(false);
   const [sending, setSending] = useState(false);

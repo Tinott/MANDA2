@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Link } from 'react-router-dom';
-import { BellRing, AlertTriangle, AlertCircle, Clock, Info, CheckCircle2 } from 'lucide-react';
+import { BellRing, AlertTriangle, AlertCircle, Clock, Info, CheckCircle2, Mail } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { buildAlerts } from '../lib/relances';
 import { Card } from './ui';
@@ -34,13 +34,21 @@ export default function AlertsCard({ limit = 8 }) {
             const S = STYLE[a.level];
             const Icon = S.icon;
             return (
-              <Link key={i} to={a.link} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 ${S.bg} hover:opacity-90 transition-opacity`}>
+              <div key={i} className={`flex items-start gap-2.5 rounded-lg border px-3 py-2.5 ${S.bg}`}>
                 <Icon size={15} className={`${S.cls} mt-0.5 shrink-0`} />
-                <div className="min-w-0">
+                <Link to={a.link} className="min-w-0 flex-1 hover:opacity-80 transition-opacity">
                   <div className="text-[12.5px] font-medium text-ink truncate">{a.label}</div>
                   <div className="text-[11.5px] text-ink-faint">{a.detail}</div>
-                </div>
-              </Link>
+                </Link>
+                <Link
+                  to="/mail"
+                  state={{ compose: { consigne: `Rédige la relance adaptée à cette alerte : ${a.label}. ${a.detail}` } }}
+                  title="Rédiger la relance par email (brouillon IA)"
+                  className="shrink-0 h-7 w-7 rounded-md border border-line bg-surface text-ink-faint hover:text-brass hover:border-brass/50 flex items-center justify-center transition-colors"
+                >
+                  <Mail size={13} />
+                </Link>
+              </div>
             );
           })}
           {alerts.length > limit && <div className="text-[11.5px] text-ink-faint pt-1">+ {alerts.length - limit} autre(s) alerte(s)</div>}
