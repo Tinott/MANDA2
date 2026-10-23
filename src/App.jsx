@@ -23,6 +23,7 @@ import Parametres from './pages/Parametres';
 import UndoToast from './components/UndoToast';
 import Mail from './pages/Mail';
 import Assistant from './pages/Assistant';
+import { NavMemory } from './hooks/useNavMemory';
 
 function LoadingScreen() {
   return <div className="min-h-screen bg-ink" />;
@@ -70,6 +71,7 @@ function AuthGate() {
   return (
     <AppProvider orgId={orgId}>
       <HashRouter>
+        <NavMemory />
         <Shell />
       </HashRouter>
     </AppProvider>

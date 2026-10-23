@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Bot, Check, Eye, EyeOff, ChevronDown, ChevronRight, ShieldCheck, ExternalLink, Mail as MailIcon } from 'lucide-react';
+import { Bot, Check, Eye, EyeOff, ChevronDown, ChevronRight, ShieldCheck, ExternalLink, Mail as MailIcon, Share2 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { DEFAULT_MODEL, aiMode } from '../lib/ai';
 import { Card, Field, Input, Select, Button, Badge } from './ui';
@@ -78,6 +78,7 @@ export default function IntegrationsCard() {
     aiModel: societe.aiModel || DEFAULT_MODEL,
     googleClientId: societe.googleClientId || '',
     msClientId: societe.msClientId || '',
+    linkedinUrl: societe.linkedinUrl || '',
   });
   const [show, setShow] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -160,6 +161,18 @@ export default function IntegrationsCard() {
             <Badge tone={outlookOk ? 'teal' : 'rust'}>{outlookOk ? 'Prêt' : 'À configurer'}</Badge>
           </div>
         </div>
+
+        {/* ========================= LinkedIn ========================= */}
+        <div className="flex items-center gap-2 mt-6 mb-1">
+          <Share2 size={16} className="text-brass" />
+          <div className="font-display text-[15px] text-ink">LinkedIn</div>
+        </div>
+        <p className="text-[12px] text-ink-faint mb-3">
+          Le Copilote rédige vos posts (signature de mandat, transaction, point de marché) et les publie en un clic : LinkedIn s'ouvre avec le texte déjà en place, vous validez. LinkedIn n'autorise aucune application à lire votre compte (messages, réseau) — c'est une règle de LinkedIn, pas une limite de l'appli.
+        </p>
+        <Field label="Votre profil LinkedIn" hint="Utilisé dans vos signatures, teasers et posts">
+          <Input value={form.linkedinUrl} onChange={(e) => setForm({ ...form, linkedinUrl: e.target.value })} placeholder="https://www.linkedin.com/in/…" />
+        </Field>
 
         {/* ======================= Administrateur ======================= */}
         <button type="button" onClick={() => setAdminOpen((o) => !o)} className="mt-6 w-full flex items-center justify-between rounded-lg border border-line px-3.5 py-2.5 hover:bg-paper-raised transition-colors">

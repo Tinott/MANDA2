@@ -1,5 +1,7 @@
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { useFileDrop } from '../hooks/useFileDrop';
+import DropOverlay from '../components/DropOverlay';
 import { Plus, FileText, Sparkles, Download, Trash2, Pencil, UploadCloud, Loader2, AlertCircle } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { calcHonoraires, repartitionRedevable, tvaMontant, nextInvoiceNumber, clientNumero, formatEUR, formatDate } from '../lib/calc';
@@ -20,9 +22,17 @@ export default function Facturation() {
   const { factures, societe, updateFacture, removeFacture } = useApp();
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editorState, setEditorState] = useState(null); // null | 'new' | facture object
+  const [droppedFile, setDroppedFile] = useState(null);
+  // Un acte ou une promesse glissé n'importe où sur la page ouvre directement
+  // l'assistant « Générer depuis un acte ».
+  const { dragging } = useFileDrop((files) => {
+    const pdf = files.find((f) => f.type === 'application/pdf' || /\.pdf$/i.test(f.name));
+    if (pdf) { setDroppedFile(pdf); setWizardOpen(true); }
+  });
 
   return (
     <div>
+      <DropOverlay visible={dragging} titre="Déposez l'acte ou la promesse (PDF)" detail="La facture d'honoraires sera générée à partir du document" />
       <PageHeader
         eyebrow="Recettes"
         title="Facturation"
@@ -97,7 +107,7 @@ export default function Facturation() {
         facture={editorState === 'new' ? null : editorState}
         onClose={() => setEditorState(null)}
       />
-      <ActeWizard open={wizardOpen} onClose={() => setWizardOpen(false)} onEdit={(f) => setEditorState(f)} />
+      <ActeWizard open={wizardOpen} onClose={() => { setWizardOpen(false); setDroppedFile(null); }} onEdit={(f) => setEditorState(f)} initialFile={droppedFile} />
     </div>
   );
 }
@@ -291,7 +301,7 @@ function emptyForm(facture, societe) {
 
 const WIZ_STEPS = ['Document', 'Vérification', 'Barème', 'Facture'];
 
-function ActeWizard({ open, onClose, onEdit }) {
+function ActeWizard({ open, onClose, onEdit, initialFile }) {
   const { societe, factures, addFacture } = useApp();
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState('idle');
@@ -308,7 +318,10 @@ function ActeWizard({ open, onClose, onEdit }) {
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
+    if (file) lireFichier(file);
+  }
+
+  async function lireFichier(file) {
     setFileName(file.name);
     setStatus('reading');
     try {
@@ -360,6 +373,12 @@ function ActeWizard({ open, onClose, onEdit }) {
       setStatus('error');
     }
   }
+
+  useEffect(() => {
+    if (!open || !initialFile) return undefined;
+    const t = setTimeout(() => lireFichier(initialFile), 0);
+    return () => clearTimeout(t);
+  }, [open, initialFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const honoraires = extracted ? calcHonoraires(societe.bareme, extracted.prixVente) : 0;
   const rep = repartitionRedevable(honoraires, redevable, quotePart);

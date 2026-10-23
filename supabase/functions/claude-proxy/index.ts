@@ -13,9 +13,11 @@
 //     fonction (vérification du jeton Supabase) ;
 //   - modèles limités à une liste blanche, max_tokens plafonné, taille de
 //     requête plafonnée — personne ne peut faire exploser la facture ;
-//   - seul l'outil « web_search » d'Anthropic est autorisé (recherche web
-//     côté serveur pour les fiches prospect, avis de valeur et veille),
-//     avec au plus 5 recherches par requête ;
+//   - outils autorisés : la recherche web d'Anthropic (exécutée côté
+//     serveur, 5 recherches max par requête) et les outils « métier » de
+//     l'application (créer un contact, une facture…) — ceux-ci ne sont que
+//     des déclarations : le modèle demande une action, c'est le navigateur
+//     de l'utilisateur connecté qui l'exécute, dans ses propres données ;
 //   - pensez aussi à définir un plafond de dépense sur console.anthropic.com.
 
 import { createClient } from "jsr:@supabase/supabase-js@2";
@@ -84,7 +86,13 @@ Deno.serve(async (req) => {
     max_tokens?: number;
     system?: string;
     messages?: unknown;
-    tools?: Array<{ type?: string; name?: string; max_uses?: number }>;
+    tools?: Array<{
+      type?: string;
+      name?: string;
+      max_uses?: number;
+      description?: string;
+      input_schema?: unknown;
+    }>;
   };
   try {
     body = JSON.parse(raw);
@@ -101,16 +109,33 @@ Deno.serve(async (req) => {
   if (!Array.isArray(body.messages) || body.messages.length === 0) {
     return json({ error: { message: "messages manquants." } }, 400);
   }
-  // Outils : uniquement la recherche web d'Anthropic, volume limité.
+  // Outils : recherche web (volume limité) + outils métier déclaratifs.
+  const NOM_OUTIL = /^[a-zA-Z0-9_-]{1,64}$/;
+  let webSearchVu = false;
   const tools = Array.isArray(body.tools)
     ? body.tools
-        .filter((t) => t && t.type === "web_search_20250305")
-        .slice(0, 1)
-        .map((t) => ({
-          type: "web_search_20250305",
-          name: "web_search",
-          max_uses: Math.min(Math.max(1, Number(t.max_uses) || 3), 5),
-        }))
+        .map((t) => {
+          if (!t) return null;
+          if (t.type === "web_search_20250305") {
+            if (webSearchVu) return null;
+            webSearchVu = true;
+            return {
+              type: "web_search_20250305",
+              name: "web_search",
+              max_uses: Math.min(Math.max(1, Number(t.max_uses) || 3), 5),
+            };
+          }
+          if (t.type) return null; // aucun autre outil serveur (bash, éditeur de fichiers…)
+          if (!NOM_OUTIL.test(t.name || "")) return null;
+          if (!t.input_schema || typeof t.input_schema !== "object") return null;
+          return {
+            name: t.name,
+            description: String(t.description || "").slice(0, 2000),
+            input_schema: t.input_schema,
+          };
+        })
+        .filter(Boolean)
+        .slice(0, 40)
     : undefined;
 
   // --- 4. Appel Anthropic avec la clé serveur. ---

@@ -7,7 +7,7 @@ function days(dateStr) {
   return Math.round((new Date(dateStr) - new Date(new Date().toDateString())) / 86400000);
 }
 
-export function buildAlerts({ promesses = [], mandats = [], factures = [], prospects = [], courriers = [] }) {
+export function buildAlerts({ promesses = [], mandats = [], factures = [], prospects = [], courriers = [], contacts = [] }) {
   const alerts = [];
   const push = (level, label, detail, link, d) => alerts.push({ level, label, detail, link, days: d });
 
@@ -50,6 +50,15 @@ export function buildAlerts({ promesses = [], mandats = [], factures = [], prosp
     const d = days(c.dateRelancePrevue);
     if (d !== null && d <= 0 && c.statut !== 'Répondu') {
       push('info', `Relance courrier — ${c.societe || c.nomContact}`, c.objet || 'Relance de prospection à faire.', '/suivi', d);
+    }
+  });
+
+  contacts.forEach((c) => {
+    const d = days(c.prochaineRelance);
+    if (d !== null && d <= 0 && c.statutRelation !== 'Inactif') {
+      const nom = c.societe || [c.prenom, c.nom].filter(Boolean).join(' ') || 'Contact';
+      const derniere = (c.interactions || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
+      push(d < -7 ? 'warn' : 'info', `Relancer ${nom}`, derniere?.note ? `Dernier échange : ${derniere.note.slice(0, 90)}` : 'Relance planifiée sur la fiche contact.', '/contacts', d);
     }
   });
 

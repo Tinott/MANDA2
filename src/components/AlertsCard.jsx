@@ -13,10 +13,10 @@ const STYLE = {
 };
 
 export default function AlertsCard({ limit = 8 }) {
-  const { promesses, mandats, factures, prospects, courriers } = useApp();
+  const { promesses, mandats, factures, prospects, courriers, contacts } = useApp();
   const alerts = useMemo(
-    () => buildAlerts({ promesses, mandats, factures, prospects, courriers }),
-    [promesses, mandats, factures, prospects, courriers]
+    () => buildAlerts({ promesses, mandats, factures, prospects, courriers, contacts }),
+    [promesses, mandats, factures, prospects, courriers, contacts]
   );
 
   return (

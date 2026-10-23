@@ -10,9 +10,19 @@ const FIELD_SYNONYMS = {
   email: ['mail', 'email', 'e mail'],
   telephone: ['telephone', 'tel', 'coordonnees telephoniques', 'numero'],
   adresse: ['adresse du bien', 'adresse postale', 'adresse'],
+  fonction: ['fonction', 'poste', 'titre', 'role'],
+  linkedin: ['linkedin', 'profil linkedin'],
+  vehicule: ['vehicule', 'type investisseur', 'type d investisseur', 'profil investisseur', 'nature'],
+  classesActifs: ['type d actif', 'types d actifs', 'classe d actif', 'classes d actifs', 'actifs recherches', 'typologie'],
+  zones: ['zone', 'zones', 'secteur', 'secteurs', 'zone geographique', 'localisation recherchee', 'region', 'regions', 'enseigne zone'],
+  ticketMin: ['ticket min', 'ticket minimum', 'budget min', 'montant min'],
+  ticketMax: ['ticket max', 'ticket maximum', 'budget max', 'budget', 'montant max', 'capacite'],
+  rendementCible: ['rendement', 'rendement cible', 'taux cible', 'yield'],
+  source: ['source', 'origine'],
+  patrimoine: ['patrimoine', 'biens detenus', 'portefeuille'],
   notes: [
     'notes', 'notes adresse', 'adresse notes', 'notes localisation',
-    'dossier interet', 'type d actif', 'statut', 'enseigne type', 'enseigne zone',
+    'dossier interet', 'statut', 'enseigne type', 'commentaire', 'commentaires', 'remarques',
   ],
 };
 
@@ -24,6 +34,16 @@ export const TARGET_FIELDS = [
   { id: 'email', label: 'Email' },
   { id: 'telephone', label: 'Téléphone' },
   { id: 'adresse', label: 'Adresse' },
+  { id: 'fonction', label: 'Fonction' },
+  { id: 'linkedin', label: 'LinkedIn' },
+  { id: 'vehicule', label: 'Véhicule / type' },
+  { id: 'classesActifs', label: "Classes d'actifs" },
+  { id: 'zones', label: 'Zones' },
+  { id: 'ticketMin', label: 'Ticket min (€)' },
+  { id: 'ticketMax', label: 'Ticket max (€)' },
+  { id: 'rendementCible', label: 'Rendement cible (%)' },
+  { id: 'source', label: 'Source' },
+  { id: 'patrimoine', label: 'Patrimoine' },
   { id: 'notes', label: 'Notes (autres infos)' },
 ];
 

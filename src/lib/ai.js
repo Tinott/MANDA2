@@ -39,7 +39,7 @@ function webSearchTool(maxUses = 3) {
   return [{ type: 'web_search_20250305', name: 'web_search', max_uses: maxUses }];
 }
 
-async function callClaude(societe, { system, messages, maxTokens = 2048, tools }) {
+async function callClaudeRaw(societe, { system, messages, maxTokens = 2048, tools }) {
   const payload = {
     model: societe?.aiModel || DEFAULT_MODEL,
     max_tokens: maxTokens,
@@ -67,8 +67,7 @@ async function callClaude(societe, { system, messages, maxTokens = 2048, tools }
       const err = await res.json().catch(() => ({}));
       throw new Error(err?.error?.message || `Erreur API Anthropic (${res.status})`);
     }
-    const data = await res.json();
-    return data.content.filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+    return res.json();
   }
 
   // --- Mode « IA de l'application » : Edge Function partagée. ---
@@ -85,7 +84,56 @@ async function callClaude(societe, { system, messages, maxTokens = 2048, tools }
     throw new Error(message || error.message || "Erreur de l'IA partagée.");
   }
   if (data?.error) throw new Error(data.error.message || "Erreur de l'IA partagée.");
+  return data;
+}
+
+function textOf(data) {
   return (data?.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('\n');
+}
+
+async function callClaude(societe, options) {
+  return textOf(await callClaudeRaw(societe, options));
+}
+
+// ---------------------------------------------------------------------------
+// Boucle agent — le modèle peut appeler des outils métier (déclarés dans
+// agentTools.js) ; chaque demande d'action est exécutée ICI, dans le
+// navigateur, par `execute(nom, entrée)`, puis le résultat lui est renvoyé
+// jusqu'à sa réponse finale. `onAction` reçoit chaque action effectuée.
+// ---------------------------------------------------------------------------
+export async function runAgent(societe, { system, messages, tools, execute, maxTokens = 3000, maxTours = 8, onAction }) {
+  const conv = [...messages];
+  const actions = [];
+  for (let tour = 0; tour < maxTours; tour++) {
+    const data = await callClaudeRaw(societe, { system, messages: conv, maxTokens, tools });
+    const demandes = (data.content || []).filter((c) => c.type === 'tool_use');
+    if (data.stop_reason !== 'tool_use' || demandes.length === 0) {
+      return { texte: textOf(data), actions };
+    }
+    conv.push({ role: 'assistant', content: data.content });
+    const resultats = [];
+    for (const d of demandes) {
+      let sortie;
+      let erreur = false;
+      try {
+        sortie = await execute(d.name, d.input || {});
+      } catch (e) {
+        sortie = { erreur: e?.message || String(e) };
+        erreur = true;
+      }
+      const resume = sortie && typeof sortie === 'object' && sortie.resume ? sortie.resume : null;
+      actions.push({ outil: d.name, entree: d.input, resume: resume || (erreur ? `Échec : ${sortie.erreur}` : 'OK'), erreur });
+      if (onAction) onAction(actions[actions.length - 1]);
+      resultats.push({
+        type: 'tool_result',
+        tool_use_id: d.id,
+        content: JSON.stringify(sortie ?? { ok: true }).slice(0, 20000),
+        ...(erreur ? { is_error: true } : {}),
+      });
+    }
+    conv.push({ role: 'user', content: resultats });
+  }
+  return { texte: "J'ai atteint la limite d'actions pour une seule demande — reformulez pour continuer.", actions };
 }
 
 // Règles d'usage communes (plan d'exploitation CARDO) — rappelées au modèle
@@ -94,10 +142,73 @@ const REGLES =
   "Règles impératives : (1) toute donnée de marché citée porte sa source et sa date ; une donnée sans source est marquée « à vérifier » ; (2) n'invente jamais un chiffre, un comparable, un taux ou une surface ; (3) les comparables sont présentés en tableau : date, ville, surface, prix, taux ; (4) un teaser ne mentionne jamais le nom du vendeur ni l'adresse exacte du bien ; (5) le document produit sera relu et validé par l'utilisateur avant tout envoi — termine par la mention des points à vérifier en priorité (chiffres, noms, dates).";
 
 function parseJson(text) {
-  const clean = text.replace(/```json|```/g, '').trim();
+  const clean = String(text || '').replace(/```json|```/g, '').trim();
   const start = clean.indexOf('{');
-  const end = clean.lastIndexOf('}');
-  return JSON.parse(clean.slice(start, end + 1));
+  if (start === -1) throw new Error('Réponse IA inexploitable — cliquez sur « Actualiser » pour réessayer.');
+  const brut = clean.slice(start);
+
+  // Essai direct : réponse complète.
+  const fin = brut.lastIndexOf('}');
+  if (fin !== -1) {
+    try { return JSON.parse(brut.slice(0, fin + 1)); } catch { /* réparation ci-dessous */ }
+  }
+
+  // Réponse coupée en route (limite de longueur atteinte) : on repère les
+  // points de coupe plausibles (fins de valeur), puis, du plus tardif au plus
+  // ancien, on referme les accolades/crochets ouverts et on tente le parse.
+  const cutPoints = [];
+  {
+    let inStr = false, esc = false;
+    for (let i = 0; i < brut.length; i++) {
+      const c = brut[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') { inStr = false; cutPoints.push(i + 1); }
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '}' || c === ']') cutPoints.push(i + 1);
+      else if (/[0-9el]/.test(c)) cutPoints.push(i + 1); // fin possible de nombre/true/false/null
+    }
+  }
+  const referme = (frag) => {
+    const pile = [];
+    let inStr = false, esc = false;
+    for (const c of frag) {
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === '\\') esc = true;
+        else if (c === '"') inStr = false;
+        continue;
+      }
+      if (c === '"') inStr = true;
+      else if (c === '{' || c === '[') pile.push(c);
+      else if (c === '}' || c === ']') pile.pop();
+    }
+    if (inStr) return null; // coupe au milieu d'une chaîne : point invalide
+    let out = frag;
+    for (let i = pile.length - 1; i >= 0; i--) out += pile[i] === '{' ? '}' : ']';
+    return out;
+  };
+  for (let k = cutPoints.length - 1, essais = 0; k >= 0 && essais < 80; k--, essais++) {
+    let frag = brut.slice(0, cutPoints[k]);
+    // Nettoyage de fin de fragment : virgules pendantes, clé orpheline
+    // (« …,"titre" » ou « …,"titre": »), objet/tableau à peine ouvert — en
+    // boucle, car ces restes s'empilent (« …},{"titre": » par exemple).
+    for (let avant = null; avant !== frag;) {
+      avant = frag;
+      frag = frag
+        .replace(/[,\s]+$/, '')
+        .replace(/"(?:[^"\\]|\\.)*"\s*:\s*$/, '')
+        .replace(/[{[]\s*$/, '')
+        .replace(/,\s*"(?:[^"\\]|\\.)*"\s*$/, '');
+    }
+    const cand = referme(frag);
+    if (!cand) continue;
+    try { return JSON.parse(cand); } catch { /* point de coupe suivant */ }
+  }
+  throw new Error('Réponse IA incomplète — cliquez sur « Actualiser » pour réessayer.');
 }
 
 // ---------------------------------------------------------------------------
@@ -110,6 +221,20 @@ export async function extractActeAI(societe, texteActe) {
       "Tu es l'assistant d'un broker en immobilier d'entreprise français. On te donne le texte brut d'un acte notarié, d'une promesse de vente ou d'un mandat. Réponds UNIQUEMENT avec un objet JSON, sans préambule ni backticks, avec exactement ces clés (null si introuvable) : prixVente (nombre, €), vendeur (string), acquereur (string), bienAdresse (string), dateSignature (YYYY-MM-DD), dateReiteration (YYYY-MM-DD), notaire (string), honorairesMontantTTC (nombre), honorairesRedevable ('vendeur'|'acquereur'|null), numeroMandat (string), reference (string), loyerAnnuel (nombre), locataire (string).",
     messages: [{ role: 'user', content: texteActe.slice(0, 100000) }],
     maxTokens: 1024,
+  });
+  return parseJson(text);
+}
+
+// ---------------------------------------------------------------------------
+// 1 bis. Lecture d'un justificatif de dépense (ticket, facture fournisseur)
+//        à partir du texte OCR / PDF — remplace les heuristiques de ocr.js.
+// ---------------------------------------------------------------------------
+export async function extractReceiptAI(societe, texte, categories = []) {
+  const text = await callClaude(societe, {
+    system:
+      `Tu lis des justificatifs de dépenses (tickets, notes de restaurant, factures fournisseurs, péages, carburant) pour la comptabilité d'un broker immobilier français. Réponds UNIQUEMENT avec un objet JSON (sans backticks) : commercant (string), date (YYYY-MM-DD), montantTTC (nombre), tauxTva (nombre : 20, 10, 5.5, 2.1 ou 0), montantTVA (nombre ou null), categorie (un identifiant parmi : ${categories.map((c) => `${c.id} = ${c.label}`).join(' ; ') || 'autre'}), libelle (description courte). null si introuvable.`,
+    messages: [{ role: 'user', content: (texte || '').slice(0, 30000) }],
+    maxTokens: 400,
   });
   return parseJson(text);
 }
@@ -166,18 +291,61 @@ export async function askAssistant(societe, { history, snapshot, alerts, emails 
 }
 
 // ---------------------------------------------------------------------------
+// 4 bis. Copilote AGENT — la secrétaire qui agit : elle dispose des outils
+//        métier (agentTools.js), de l'instantané complet, des alertes, des
+//        documents déposés dans la conversation et de la recherche web.
+// ---------------------------------------------------------------------------
+export async function askAgent(societe, { history, snapshot, alerts, attachments, tools, execute, onAction }) {
+  const piecesJointes = (attachments || []).map((a, i) => `--- PIÈCE JOINTE ${i + 1} : ${a.nom} ---\n${(a.texte || '').slice(0, 60000)}`).join('\n\n');
+  return runAgent(societe, {
+    system:
+      `Tu es la collaboratrice administrative et commerciale intégrée de « ${societe?.nom || 'Mandat'} », application de gestion d'un broker en immobilier d'entreprise (Capital Markets) en France, dirigée par ${societe?.contactNom || "l'utilisateur"}. Tu agis comme une secrétaire de direction ultra compétente, proactive et fiable : tu ne te contentes pas de répondre, tu FAIS — grâce à tes outils tu crées et mets à jour les contacts, notes d'échanges, lignes de suivi commercial, mandats, promesses, factures brouillon, notes de frais ; tu prépares les emails (composer pré-rempli, l'utilisateur envoie), les IM (assistant pré-rempli), les documents juridiques (PDF brouillon) ; tu rapproches investisseurs et biens ; tu mémorises dans la bibliothèque ce qui doit l'être ; tu cherches sur le web quand il faut une information externe (toujours sourcée et datée).
+
+Méthode : (1) comprends la demande et ce qu'elle implique concrètement dans l'application ; (2) consulte les données (instantané ci-dessous, outils lister_donnees / rechercher_contacts) avant d'agir, pour éviter les doublons et retrouver les identifiants ; (3) agis avec les outils, en enchaînant les étapes nécessaires sans redemander ce que tu peux déduire ; (4) réponds brièvement en français : ce que tu as fait, ce qu'il reste à valider par l'utilisateur, et ce que tu suggères ensuite (échéance, relance, document). Ne demande confirmation que pour les décisions réellement ambiguës. N'invente jamais un chiffre, un nom ou une date : si une donnée manque, dis-le ou cherche-la. Quand tu rédiges (emails, posts LinkedIn, comptes rendus, NDA, lettres de process, index de data room, tableaux comparatifs, scoring d'offres, tombstones), applique : ${REGLES} Pour un post LinkedIn : sobre, professionnel, sans emoji excessif, avec 3 à 5 hashtags en fin. Dates au format français dans tes réponses, montants en euros formatés.`,
+    messages: [
+      {
+        role: 'user',
+        content: `DONNÉES ACTUELLES DE L'APPLICATION (instantané — utilise les outils pour le détail) :\n${JSON.stringify(snapshot).slice(0, 90000)}${alerts?.length ? `\n\nALERTES CALCULÉES PAR L'APPLICATION :\n${JSON.stringify(alerts).slice(0, 15000)}` : ''}${piecesJointes ? `\n\nDOCUMENTS DÉPOSÉS DANS LA CONVERSATION :\n${piecesJointes}` : ''}`,
+      },
+      { role: 'assistant', content: "Bien reçu : j'ai l'état complet de l'application, les échéances et les documents déposés. Dites-moi ce que vous voulez que je fasse." },
+      ...history,
+    ],
+    tools: [...(tools || []), ...webSearchTool(3)],
+    execute,
+    onAction,
+    maxTokens: 3500,
+    maxTours: 10,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // 5. Briefing quotidien — généré automatiquement à l'ouverture du Copilote,
 //    sans rien demander : la secrétaire fait le point du jour.
 // ---------------------------------------------------------------------------
 export async function dailyBriefing(societe, { snapshot, alerts }) {
   const text = await callClaude(societe, {
     system:
-      `Tu es la secrétaire de direction de ${societe?.contactNom || "l'utilisateur"} (${societe?.nom || 'cabinet de brokerage'}), broker en immobilier d'entreprise en France. On te donne l'instantané complet de son activité et les alertes calculées par l'application. Prépare son briefing du jour, comme une secrétaire ultra compétente : l'essentiel d'abord, puis les actions concrètes datées. Réponds UNIQUEMENT en JSON, sans backticks, avec les clés : resume (2-3 phrases, l'état de l'activité et ce qui compte aujourd'hui), actions (tableau de 3 à 7 éléments {titre (court, impératif), detail (1 phrase avec les noms et les dates), route (une de : /promesses, /mandats, /facturation, /suivi, /mail, /documents, /im, /frais, /comptabilite)}). N'invente aucun chiffre ni aucune échéance : appuie-toi uniquement sur les données fournies. S'il n'y a vraiment rien d'urgent, dis-le dans resume et propose des actions de fond (relances commerciales, documents à préparer).`,
+      `Tu es la secrétaire de direction de ${societe?.contactNom || "l'utilisateur"} (${societe?.nom || 'cabinet de brokerage'}), broker en immobilier d'entreprise en France. On te donne l'instantané complet de son activité et les alertes calculées par l'application. Prépare son briefing du jour, comme une secrétaire ultra compétente : l'essentiel d'abord, puis les actions concrètes datées. Réponds UNIQUEMENT en JSON, sans backticks, avec les clés : resume (2-3 phrases, l'état de l'activité et ce qui compte aujourd'hui), actions (tableau de 3 à 5 éléments MAXIMUM {titre (court, impératif), detail (1 phrase courte avec les noms et les dates), route (une de : /promesses, /mandats, /facturation, /suivi, /mail, /documents, /im, /frais, /comptabilite)}). N'invente aucun chiffre ni aucune échéance : appuie-toi uniquement sur les données fournies. S'il n'y a vraiment rien d'urgent, dis-le dans resume et propose des actions de fond (relances commerciales, documents à préparer).`,
     messages: [{
       role: 'user',
       content: `DATE DU JOUR : ${new Date().toLocaleDateString('fr-FR', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}\n\nDONNÉES:\n${JSON.stringify(snapshot).slice(0, 60000)}\n\nALERTES:\n${JSON.stringify(alerts || []).slice(0, 15000)}`,
     }],
-    maxTokens: 1200,
+    maxTokens: 2500,
+  });
+  return parseJson(text);
+}
+
+// ---------------------------------------------------------------------------
+// 5 bis. Données d'un bien pour l'IM, extraites des documents déposés (bail,
+//        état locatif, diagnostics, plaquette, acte…).
+// ---------------------------------------------------------------------------
+export async function extractImDataAI(societe, { documents, bienConnu }) {
+  const corpus = (documents || []).map((d, i) => `--- DOCUMENT ${i + 1} : ${d.nom} ---\n${(d.texte || '').slice(0, 40000)}`).join('\n\n');
+  const text = await callClaude(societe, {
+    system:
+      "Tu prépares un mémorandum d'information (IM) immobilier d'investissement en France. À partir des documents fournis (bail commercial, état locatif, diagnostics, plaquette, acte, plan…), extrais les données du bien. Réponds UNIQUEMENT avec un objet JSON (sans backticks) avec ces clés (null si introuvable, ne devine jamais) : adresse, typeBien (ex. « Bâtiment d'activité », « Plateforme logistique », « Local commercial », « Bureaux »), surface (nombre, m²), locataire (nom de l'enseigne / société), activiteLocataire (1 à 2 phrases), loyerAnnuel (nombre, € HT HC/an), charges (texte court : répartition des charges, triple net…), tripleNet (booléen), dureeBail (ex. « 3/6/9 », « 12 ans fermes »), dateEffetBail (YYYY-MM-DD), dateFinBail (YYYY-MM-DD), indexation (ex. « ILC — révision triennale », « ILAT annuelle »), depotGarantie (texte), reference (références cadastrales), dpe (lettre), situationLocative (texte court : loué en totalité, vacance…), prix (nombre € si un prix de vente apparaît), pointsAttention (tableau de phrases courtes : clauses ou éléments à vérifier).",
+    messages: [{ role: 'user', content: `${bienConnu ? `DONNÉES DÉJÀ CONNUES (à compléter, pas à contredire sans preuve) :\n${JSON.stringify(bienConnu)}\n\n` : ''}${corpus.slice(0, 120000)}` }],
+    maxTokens: 1500,
   });
   return parseJson(text);
 }
@@ -190,7 +358,7 @@ export async function generateImTexts(societe, bien) {
     system:
       "Tu rédiges les textes d'un mémorandum d'information (IM) immobilier d'investissement en France, dans le style des brokers Capital Markets (CBRE, BNPPRE) : factuel, valorisant, sans superlatifs creux. Réponds UNIQUEMENT en JSON avec les clés : environnement (paragraphe sur la situation géographique et le bassin économique, 80-120 mots), descriptionActif (paragraphe sur le bien, 60-100 mots), presentationLocataire (paragraphe sur le locataire et son activité, 60-100 mots), pointsCles (tableau de 5 à 6 points clés de l'investissement, chacun {titre, detail}).",
     messages: [{ role: 'user', content: JSON.stringify(bien) }],
-    maxTokens: 1500,
+    maxTokens: 2200,
   });
   return parseJson(text);
 }
@@ -295,20 +463,50 @@ export async function draftRelance(societe, { contexte, snapshot }) {
 }
 
 // ---------------------------------------------------------------------------
+// 14. Post LinkedIn — sobre, professionnel, prêt à publier.
+// ---------------------------------------------------------------------------
+export async function postLinkedIn(societe, { sujet, snapshot }) {
+  return callClaude(societe, {
+    system:
+      `Tu rédiges les posts LinkedIn de ${societe?.contactNom || 'un broker'} (${societe?.nom || ''}), broker en immobilier d'entreprise Capital Markets en France. Style : sobre, crédible, concret — jamais de superlatifs creux ni d'emojis en rafale (un ou deux au maximum). Structure : accroche d'une ligne, 3 à 6 lignes courtes aérées, une conclusion ou un appel discret à l'échange, 3 à 5 hashtags en fin. 900 caractères maximum. ${REGLES} Ne cite jamais le nom d'un vendeur ni une adresse exacte sans que ce soit explicitement demandé (confidentialité des dossiers). Réponds uniquement avec le texte du post.`,
+    messages: [{ role: 'user', content: `SUJET : ${sujet}\n\nCONTEXTE (données de l'application) :\n${JSON.stringify(snapshot || {}).slice(0, 20000)}` }],
+    maxTokens: 700,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Instantané compact de l'application, injecté dans les prompts.
 // ---------------------------------------------------------------------------
-export function buildAppSnapshot({ societe, mandats, promesses, factures, notesFrais, contacts, prospects, courriers, documents, registre }) {
-  const lite = (arr, keys, max = 60) => (arr || []).slice(0, max).map((o) => Object.fromEntries(keys.filter((k) => o[k] !== undefined && o[k] !== '').map((k) => [k, o[k]])));
+export function buildAppSnapshot({ societe, mandats, promesses, factures, notesFrais, contacts, prospects, courriers, documents, dossiers, registre }) {
+  const lite = (arr, keys, max = 60) => (arr || []).slice(0, max).map((o) => Object.fromEntries(keys.filter((k) => o[k] !== undefined && o[k] !== '' && !(Array.isArray(o[k]) && !o[k].length)).map((k) => [k, o[k]])));
+  const contactsLite = (contacts || []).slice(0, 250).map((c) => {
+    const inter = (c.interactions || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 2);
+    const o = {
+      id: c.id, societe: c.societe, nom: [c.prenom, c.nom].filter(Boolean).join(' ') || undefined, fonction: c.fonction, categorie: c.categorie,
+      email: c.email, tel: c.telephone, vehicule: c.vehicule, classes: c.classesActifs, zones: c.zones,
+      ticketMin: c.ticketMin, ticketMax: c.ticketMax, rendementCible: c.rendementCible, strategie: c.strategie,
+      statut: c.statutRelation, prochaineRelance: c.prochaineRelance, patrimoine: c.patrimoine ? String(c.patrimoine).slice(0, 200) : undefined,
+      notes: c.notes ? String(c.notes).slice(0, 200) : undefined,
+      derniersEchanges: inter.length ? inter.map((i) => `${i.date || ''} ${i.type || ''}: ${(i.note || '').slice(0, 120)}`) : undefined,
+    };
+    return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length)));
+  });
+  const bibliotheque = (documents || []).filter((d) => d.type === 'bibliotheque').slice(0, 40).map((d) => ({
+    id: d.id, nom: d.nom, date: d.createdAt?.slice(0, 10), resume: (d.resume || '').slice(0, 900),
+  }));
   return {
-    societe: { nom: societe?.nom, contactNom: societe?.contactNom },
-    mandats: lite(mandats, ['numero', 'adresse', 'typeBien', 'typeMandat', 'variante', 'mandant', 'prixVente', 'loyerAnnuel', 'statut', 'dateSignature', 'dateFin']),
-    promesses: lite(promesses, ['bienAdresse', 'vendeur', 'acquereur', 'prixVente', 'honorairesHT', 'redevable', 'notaire', 'dateSignature', 'dateConditionsSuspensives', 'dateReiteration', 'dateProchaineRelance', 'statut']),
-    factures: lite(factures, ['numero', 'client', 'bienAdresse', 'montantHT', 'montantTTC', 'dateEmission', 'statut', 'mandatRef']),
-    notesFrais: lite(notesFrais, ['date', 'categorie', 'montantTTC', 'statut'], 30),
-    contacts: lite(contacts, ['nom', 'prenom', 'societe', 'email', 'telephone', 'categorie'], 100),
-    prospects: lite(prospects, ['nom', 'societe', 'statut', 'prochaineRelance', 'notes'], 50),
-    courriers: lite(courriers, ['objet', 'destinataire', 'date', 'dateRelancePrevue', 'statut'], 30),
-    documents: lite(documents, ['nom', 'type', 'statut', 'date'], 40),
+    dateDuJour: new Date().toISOString().slice(0, 10),
+    societe: { nom: societe?.nom, contactNom: societe?.contactNom, telephone: societe?.telephone, email: societe?.email, linkedin: societe?.linkedinUrl },
+    mandats: lite(mandats, ['id', 'numero', 'adresse', 'typeBien', 'typeMandat', 'variante', 'mandant', 'client', 'prixVente', 'loyerAnnuel', 'surface', 'statut', 'dateSignature', 'dateDebutMandat', 'dateFinMandat']),
+    promesses: lite(promesses, ['id', 'bienAdresse', 'vendeur', 'acquereur', 'prixVente', 'honorairesHT', 'redevable', 'notaire', 'dateSignature', 'dateLimiteConditionsSuspensives', 'dateReiteration', 'dateProchaineRelance', 'statut']),
+    factures: lite(factures, ['id', 'numero', 'client', 'bienAdresse', 'montantHT', 'montantTTC', 'dateEmission', 'statut', 'mandatRef']),
+    notesFrais: lite(notesFrais, ['id', 'date', 'commercant', 'categorieLabel', 'montantTTC'], 40),
+    contacts: contactsLite,
+    prospects: lite(prospects, ['id', 'dossierId', 'prospect', 'contact', 'type', 'statut', 'niveauInteret', 'prochaineRelance', 'prochaineAction', 'retour', 'prixPropose'], 80),
+    courriers: lite(courriers, ['id', 'objet', 'societe', 'nomContact', 'date', 'dateRelancePrevue', 'statut'], 30),
+    documentsJuridiques: lite((documents || []).filter((d) => d.type !== 'bibliotheque'), ['id', 'numero', 'typeId', 'variante', 'statut', 'createdAt'], 40),
+    bibliotheque,
+    dossiersIM: lite((dossiers || []).filter((d) => d.type === 'IM'), ['id', 'nom', 'statut', 'createdAt'], 30),
     registre: registre ? { totalProduitsHT: registre.totalProduitsHT, totalChargesHT: registre.totalChargesHT } : undefined,
   };
 }

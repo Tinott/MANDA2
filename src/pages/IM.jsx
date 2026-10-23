@@ -1,7 +1,13 @@
-import { useState } from 'react';
-import { FileStack, Sparkles, Download, UploadCloud, Loader2, ImagePlus, X, Wand2, AlertCircle } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { FileStack, Sparkles, Download, UploadCloud, Loader2, ImagePlus, X, Wand2, AlertCircle, Users, ArrowRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { hasApiKey, generateImTexts } from '../lib/ai';
+import { hasApiKey, generateImTexts, extractImDataAI } from '../lib/ai';
+import { extractTextFromFile, estImage } from '../lib/fileText';
+import { useFileDrop } from '../hooks/useFileDrop';
+import DropOverlay from '../components/DropOverlay';
+import { matcherInvestisseurs } from '../lib/matching';
+import { contactLabel } from '../lib/contactsSchema';
 import { PageHeader, Card, Button, Field, Input, Textarea, Badge, EmptyState, Stepper } from '../components/ui';
 
 const STEPS = ['Bien', 'Documents', 'Relecture', 'Export'];
@@ -12,10 +18,49 @@ async function downloadImPptx(bien, societe) {
 }
 
 export default function IM() {
-  const { mandats, societe, dossiers, addDossier } = useApp();
+  const { mandats, societe, dossiers, addDossier, contacts, addProspectsBulk } = useApp();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [step, setStep] = useState(mandats.length ? 0 : -1);
   const [bien, setBien] = useState(null);
+  const bienRef = useRef(bien);
+  useEffect(() => { bienRef.current = bien; }, [bien]);
+  const [dossierId, setDossierId] = useState(null);
+  const [prospectsCrees, setProspectsCrees] = useState(false);
+  const [docsLus, setDocsLus] = useState([]); // { nom, methode }
+  const [pointsAttention, setPointsAttention] = useState([]);
+
+  // Ouverture depuis le Copilote (« prépare l'IM de … ») : bien pré-rempli.
+  useEffect(() => {
+    const b = location.state?.bien;
+    if (!b) return undefined;
+    window.history.replaceState({}, '');
+    const t = setTimeout(() => {
+      setBien({
+        adresse: '', typeBien: '', prix: '', surface: '', loyerAnnuel: '', dpe: '', description: '', charges: '',
+        situationLocative: '', reference: '', locataire: '', dureeBail: '3/6/9', indexation: '', dateEffetBail: '',
+        activiteLocataire: '', tripleNet: false, prixRecommande: '', modaliteVente: '', honorairesPct: '', environnement: '',
+        photoPrincipale: '', photoComposition: '', photoSituation: '', photos: [], pointsCles: [], ...b,
+      });
+      setDocsLus([]); setPointsAttention([]);
+      setStep(2);
+    }, 0);
+    return () => clearTimeout(t);
+  }, [location.state]);
+
+  const cibles = bien ? matcherInvestisseurs(contacts, { typeBien: bien.typeBien, adresse: bien.adresse, prix: bien.prix, loyerAnnuel: bien.loyerAnnuel, description: bien.description }, { limite: 10, minimum: 30 }) : [];
+
+  function creerSuivi() {
+    if (!cibles.length) return;
+    addProspectsBulk(cibles.map((r) => ({
+      dossierId: dossierId || '', prospect: contactLabel(r.contact), contact: [r.contact.prenom, r.contact.nom].filter(Boolean).join(' '),
+      type: r.contact.vehicule === 'Family office' ? 'Family Office' : r.contact.vehicule === 'SCPI' ? 'SCPI' : /fonci/i.test(r.contact.vehicule || '') ? 'Foncière' : r.contact.vehicule === 'Investisseur privé' ? 'Privé' : 'Autre',
+      statut: 'À contacter', prochaineAction: 'Envoyer l’IM', niveauInteret: r.score >= 70 ? 'Fort' : 'Moyen',
+    })));
+    setProspectsCrees(true);
+  }
   const [uploading, setUploading] = useState(false);
+  const [uploadLabel, setUploadLabel] = useState('');
   const [aiBusy, setAiBusy] = useState(false);
   const [aiError, setAiError] = useState('');
 
@@ -28,31 +73,83 @@ export default function IM() {
       situationLocative: '', reference: '', locataire: '', dureeBail: '3/6/9', indexation: '',
       dateEffetBail: '', activiteLocataire: '', tripleNet: m.typeMandat === 'Location',
       prixRecommande: '', modaliteVente: '', honorairesPct: '', environnement: '',
-      photoPrincipale: '', photoComposition: '', photoSituation: '',
+      photoPrincipale: '', photoComposition: '', photoSituation: '', photos: [], pointsCles: [],
     });
+    setDocsLus([]); setPointsAttention([]); setAiError('');
     setStep(1);
   }
 
   async function handleDocs(e) {
     const files = [...(e.target.files || [])];
-    if (!files.length) return;
+    e.target.value = '';
+    if (files.length) ingerer(files);
+  }
+
+  // Dépôt de documents et de photos : les PDF / Word / Excel sont lus et
+  // leurs données extraites par l'IA dans les champs de l'IM ; les images
+  // sont affectées automatiquement (couverture, carte, plan, galerie).
+  async function ingerer(files) {
+    if (!bien) return;
     setUploading(true);
+    const lus = [];
+    const textes = [];
     try {
-      const { extractPdfText, parseActeFields } = await import('../lib/pdfExtract');
-      for (const f of files.filter((f) => f.type === 'application/pdf')) {
-        const text = await extractPdfText(f);
-        const fields = parseActeFields(text);
-        setBien((b) => ({
-          ...b,
-          reference: b.reference || fields.reference,
-          description: b.description || '',
-        }));
+      for (const f of files.slice(0, 12)) {
+        setUploadLabel(`Lecture de ${f.name}…`);
+        if (estImage(f)) {
+          const { fileToResizedDataUrl } = await import('../lib/image');
+          const dataUrl = await fileToResizedDataUrl(f, 1600, 0.85);
+          const n = f.name.toLowerCase();
+          setBien((b) => {
+            if (/carte|map|situation|plan de situation|localisation/.test(n) && !b.photoSituation) return { ...b, photoSituation: dataUrl };
+            if (/plan|facade|façade|coupe|composition/.test(n) && !b.photoComposition) return { ...b, photoComposition: dataUrl };
+            if (!b.photoPrincipale) return { ...b, photoPrincipale: dataUrl };
+            return { ...b, photos: [...(b.photos || []), dataUrl].slice(0, 8) };
+          });
+          lus.push({ nom: f.name, methode: 'photo' });
+          continue;
+        }
+        try {
+          const r = await extractTextFromFile(f, { onProgress: (m) => setUploadLabel(`${f.name} — ${m}`) });
+          if (r.texte?.trim()) textes.push({ nom: f.name, texte: r.texte });
+          lus.push({ nom: f.name, methode: r.methode });
+        } catch (err) {
+          lus.push({ nom: f.name, methode: 'erreur', erreur: err.message });
+        }
+      }
+      setDocsLus((d) => [...d, ...lus]);
+      if (textes.length && hasApiKey(societe)) {
+        setUploadLabel('Extraction des données du bien par l\u2019IA…');
+        try {
+          const data = await extractImDataAI(societe, { documents: textes, bienConnu: { adresse: bien.adresse, typeBien: bien.typeBien, surface: bien.surface, loyerAnnuel: bien.loyerAnnuel, locataire: bien.locataire } });
+          setBien((b) => {
+            const out = { ...b };
+            const prend = (k, v) => { if (v !== null && v !== undefined && v !== '' && (out[k] === '' || out[k] === undefined || out[k] === null)) out[k] = v; };
+            ['adresse', 'typeBien', 'surface', 'locataire', 'activiteLocataire', 'loyerAnnuel', 'charges', 'dureeBail', 'dateEffetBail', 'indexation', 'reference', 'dpe', 'situationLocative', 'prix'].forEach((k) => prend(k, data[k]));
+            if (typeof data.tripleNet === 'boolean' && !b.locataire) out.tripleNet = data.tripleNet;
+            return out;
+          });
+          if (Array.isArray(data.pointsAttention)) setPointsAttention(data.pointsAttention.filter(Boolean).slice(0, 8));
+          // Puis les textes de présentation et les points clés, sur les champs encore vides.
+          await new Promise((r) => setTimeout(r, 0));
+          setUploadLabel('Rédaction des textes de présentation…');
+          await redigerAvecIA();
+        } catch (err) {
+          setAiError(`Extraction IA impossible : ${err.message}`);
+        }
+      } else if (textes.length) {
+        // Sans IA : repli sur l'extraction locale (référence cadastrale).
+        const { parseActeFields } = await import('../lib/pdfExtract');
+        const fields = parseActeFields(textes.map((t) => t.texte).join('\n'));
+        setBien((b) => ({ ...b, reference: b.reference || fields.reference || '' }));
       }
     } finally {
       setUploading(false);
+      setUploadLabel('');
       setStep(2);
     }
   }
+  const { dragging } = useFileDrop(ingerer, { enabled: Boolean(bien) && step >= 1 && step <= 2 });
 
   async function handlePhoto(field, e) {
     const file = e.target.files?.[0];
@@ -69,13 +166,14 @@ export default function IM() {
     setAiBusy(true);
     setAiError('');
     try {
-      const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, ...infos } = bien;
+      const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, photos: _p4, ...infos } = bienRef.current || bien;
       const textes = await generateImTexts(societe, infos);
       setBien((b) => ({
         ...b,
         environnement: b.environnement?.trim() ? b.environnement : (textes.environnement || b.environnement),
         description: b.description?.trim() ? b.description : (textes.descriptionActif || b.description),
         activiteLocataire: b.activiteLocataire?.trim() ? b.activiteLocataire : (textes.presentationLocataire || b.activiteLocataire),
+        pointsCles: Array.isArray(textes.pointsCles) && textes.pointsCles.length ? textes.pointsCles : (b.pointsCles || []),
       }));
     } catch {
       setAiError("La rédaction assistée a échoué — vérifiez la clé API dans Paramètres → Intégrations, puis réessayez.");
@@ -88,13 +186,16 @@ export default function IM() {
     // La bibliothèque garde une trace du document (nom, statut) mais pas les
     // photos elles-mêmes — déjà présentes dans le .pptx téléchargé, elles
     // n'ont pas besoin d'être dupliquées dans le stockage local.
-    const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, ...bienLeger } = bien;
-    addDossier({ type: 'IM', nom: `IM — ${bien.adresse}`, bien: bienLeger, statut: 'Diffusé' });
+    const { photoPrincipale: _p1, photoComposition: _p2, photoSituation: _p3, photos: _p4, ...bienLeger } = bien;
+    const rec = addDossier({ type: 'IM', nom: `IM — ${bien.adresse}`, bien: bienLeger, statut: 'Diffusé' });
+    setDossierId(rec?.id || null);
+    setProspectsCrees(false);
     setStep(3);
   }
 
   return (
     <div>
+      <DropOverlay visible={dragging} titre="Déposez les documents et photos du bien" detail="Bail, état locatif, diagnostics, plaquette, photos, plan, capture Maps — tout est lu et affecté automatiquement" />
       <PageHeader
         eyebrow="Production commerciale"
         title="Memorandums (IM)"
@@ -130,19 +231,19 @@ export default function IM() {
             {step === 1 && bien && (
               <div className="space-y-4">
                 <p className="text-[13px] text-ink-soft">
-                  Ajoutez les documents du bien (bail, diagnostics, état locatif…) pour compléter automatiquement le dossier.
+                  Déposez d'un coup tout ce que vous avez : bail, état locatif, diagnostics, plaquette, <span className="font-medium text-ink">photos</span> et plans. Les données du bien sont extraites par l'IA, les photos affectées automatiquement (nommez-les « carte… » ou « plan… » pour la situation et la composition).
                 </p>
                 <label className="flex flex-col items-center justify-center gap-2 border-2 border-dashed border-line rounded-xl py-9 cursor-pointer hover:border-brass hover:bg-brass-soft/30 transition-colors">
                   {uploading ? (
-                    <><Loader2 className="animate-spin text-brass" size={24} /><span className="text-[12.5px] text-ink-soft">Lecture des documents…</span></>
+                    <><Loader2 className="animate-spin text-brass" size={24} /><span className="text-[12.5px] text-ink-soft">{uploadLabel || 'Lecture des documents…'}</span></>
                   ) : (
                     <>
                       <UploadCloud className="text-ink-faint" size={24} />
-                      <span className="text-[13px] text-ink font-medium">Déposer les documents (PDF, images)</span>
-                      <span className="text-[11.5px] text-ink-faint">Bail, diagnostics, plans, photos…</span>
+                      <span className="text-[13px] text-ink font-medium">Déposer les documents et photos</span>
+                      <span className="text-[11.5px] text-ink-faint">PDF, Word, Excel, images — ou glissez-les n'importe où sur la page</span>
                     </>
                   )}
-                  <input type="file" multiple className="hidden" onChange={handleDocs} />
+                  <input type="file" multiple accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,image/*" className="hidden" onChange={handleDocs} />
                 </label>
                 <div className="text-center">
                   <button onClick={() => setStep(2)} className="text-[12px] text-ink-faint hover:text-ink underline underline-offset-2">
@@ -166,6 +267,18 @@ export default function IM() {
                 {aiError && (
                   <div className="flex items-center gap-2 text-[12px] text-rust"><AlertCircle size={13} /> {aiError}</div>
                 )}
+                {(docsLus.length > 0 || pointsAttention.length > 0) && (
+                  <div className="rounded-lg border border-line bg-paper-raised px-3.5 py-2.5 text-[12px] space-y-1.5">
+                    {docsLus.length > 0 && (
+                      <div className="text-ink-soft"><span className="font-medium text-ink">Lus :</span> {docsLus.map((d) => d.nom).join(', ')}
+                        <label className="ml-2 text-brass hover:text-brass-deep cursor-pointer">+ ajouter<input type="file" multiple accept=".pdf,.docx,.xlsx,.xls,.csv,.txt,image/*" className="hidden" onChange={handleDocs} /></label>
+                      </div>
+                    )}
+                    {pointsAttention.length > 0 && (
+                      <div className="text-ink-soft"><span className="font-medium text-rust">À vérifier :</span> {pointsAttention.join(' · ')}</div>
+                    )}
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-4">
                   <Field label="Prix / valeur"><Input type="number" value={bien.prix} onChange={(e) => setBien({ ...bien, prix: e.target.value })} /></Field>
                   <Field label="Loyer annuel"><Input type="number" value={bien.loyerAnnuel} onChange={(e) => setBien({ ...bien, loyerAnnuel: e.target.value })} /></Field>
@@ -188,6 +301,19 @@ export default function IM() {
                     <PhotoField label="Carte / emplacement" hint="Capture Maps" value={bien.photoSituation} onChange={(e) => handlePhoto('photoSituation', e)} onClear={() => setBien({ ...bien, photoSituation: '' })} />
                     <PhotoField label="Plan / façade" hint="Composition" value={bien.photoComposition} onChange={(e) => handlePhoto('photoComposition', e)} onClear={() => setBien({ ...bien, photoComposition: '' })} />
                   </div>
+                  {(bien.photos || []).length > 0 && (
+                    <div className="mt-3">
+                      <div className="text-[11.5px] font-medium text-ink mb-1">Galerie ({bien.photos.length})</div>
+                      <div className="flex flex-wrap gap-2">
+                        {bien.photos.map((p, i) => (
+                          <div key={i} className="relative h-16 w-24 rounded-lg overflow-hidden border border-line">
+                            <img src={p} alt={`Photo ${i + 1}`} className="w-full h-full object-cover" />
+                            <button type="button" onClick={() => setBien({ ...bien, photos: bien.photos.filter((_, j) => j !== i) })} className="absolute top-1 right-1 h-5 w-5 rounded-full bg-ink/70 text-white flex items-center justify-center hover:bg-rust"><X size={11} /></button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                   {bien.photoSituation && (
                     <Field label="Présentation de l'emplacement" hint="Texte affiché à côté de la carte">
                       <Textarea value={bien.environnement} onChange={(e) => setBien({ ...bien, environnement: e.target.value })} placeholder="Accessibilité, bassin économique, environnement immédiat…" />
@@ -236,6 +362,27 @@ export default function IM() {
                   <Button variant="outline" onClick={() => { setStep(mandats.length ? 0 : -1); setBien(null); }}>Nouveau document</Button>
                   <Button variant="brass" onClick={() => downloadImPptx(bien, societe)}><Download size={15} /> Télécharger (.pptx)</Button>
                 </div>
+
+                {cibles.length > 0 && (
+                  <div className="mt-8 text-left rounded-xl border border-brass/25 bg-brass-soft/20 p-4">
+                    <div className="flex items-center justify-between gap-3 mb-2">
+                      <div className="flex items-center gap-2 text-[13px] font-medium text-ink"><Users size={15} className="text-brass" /> Investisseurs à cibler ({cibles.length})</div>
+                      {prospectsCrees
+                        ? <span className="text-[12px] text-teal">Ajoutés au Suivi commercial ✓</span>
+                        : <Button size="sm" variant="outline" onClick={creerSuivi}>Créer le suivi de diffusion</Button>}
+                    </div>
+                    <ul className="space-y-1.5">
+                      {cibles.map((r) => (
+                        <li key={r.contact.id} className="flex items-start justify-between gap-3 text-[12.5px]">
+                          <div className="min-w-0"><span className="text-ink font-medium">{contactLabel(r.contact)}</span><span className="text-ink-faint"> — {r.raisons.join(' · ')}</span></div>
+                          <span className={`shrink-0 tabular font-semibold ${r.score >= 70 ? 'text-teal' : 'text-brass'}`}>{r.score} %</span>
+                        </li>
+                      ))}
+                    </ul>
+                    <button type="button" onClick={() => navigate('/assistant', { state: { prefill: { question: `Lance la campagne de diffusion de l'IM « ${bien.adresse} » : pour chacun des investisseurs ciblés, prépare l'email personnalisé d'envoi du teaser et trace l'envoi dans le Suivi commercial.` } } })}
+                      className="mt-3 text-[12px] text-brass hover:text-brass-deep inline-flex items-center gap-1"><Sparkles size={12} /> Confier la campagne au Copilote <ArrowRight size={12} /></button>
+                  </div>
+                )}
               </div>
             )}
           </Card>

@@ -87,7 +87,7 @@ export async function generateImPptx(bien, societe) {
   geo.addShape('rect', { x: 8.55, y: 0, w: 4.78, h: 7.5, fill: { color: INK } });
   brand(geo, false);
   sectionHeader(geo, '01', "Présentation de l'emplacement");
-  geo.addText(`Opportunité d'acquisition — ${bien?.typeBien || 'actif'}${bien?.locataire ? ` loué à ${bien.locataire.toUpperCase()}` : ''}`, { x: 0.5, y: 1.75, w: 5.4, h: 0.6, fontSize: 13, bold: true, color: INK, fontFace: 'Georgia' });
+  geo.addText(`Opportunité d'acquisition — ${bien?.typeBien || 'actif'}${bien?.locataire ? ` — locataire : ${bien.locataire.toUpperCase()}` : ''}`, { x: 0.5, y: 1.75, w: 5.4, h: 0.6, fontSize: 13, bold: true, color: INK, fontFace: 'Georgia' });
   geo.addText(bien?.environnement || "Décrivez ici le bassin économique, les accès routiers et la dynamique du secteur (champ « Environnement » de l'assistant IM).", { x: 0.5, y: 2.35, w: 5.4, h: 4.3, fontSize: 13.5, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.25, align: 'justify' });
   if (bien?.photoSituation) geo.addImage({ data: bien.photoSituation, x: 6.2, y: 1.8, w: 6.3, h: 4.6, sizing: { type: 'cover', w: 6.3, h: 4.6 } });
   footer(geo);
@@ -109,6 +109,23 @@ export async function generateImPptx(bien, societe) {
   if (bien?.description) comp.addText(bien.description, { x: 0.55, y: 4.0, w: 4.1, h: 2.6, fontSize: 12, color: MUTED, fontFace: 'Georgia', lineSpacingMultiple: 1.2, align: 'justify' });
   if (bien?.photoComposition) comp.addImage({ data: bien.photoComposition, x: 4.95, y: 1.85, w: 7.5, h: 4.7, sizing: { type: 'contain', w: 7.5, h: 4.7 } });
   footer(comp);
+
+  // ------------------------------------------------- Galerie photos (optionnelle)
+  const galerie = (bien?.photos || []).filter(Boolean);
+  for (let i = 0; i < galerie.length; i += 2) {
+    const g = pptx.addSlide();
+    g.background = { color: PAPER };
+    brand(g);
+    sectionHeader(g, '02', i === 0 ? 'Visuels du bien' : 'Visuels du bien (suite)');
+    const paire = galerie.slice(i, i + 2);
+    if (paire.length === 1) {
+      g.addImage({ data: paire[0], x: 0.55, y: 1.75, w: 12.2, h: 5.0, sizing: { type: 'contain', w: 12.2, h: 5.0 } });
+    } else {
+      g.addImage({ data: paire[0], x: 0.55, y: 1.75, w: 6.0, h: 5.0, sizing: { type: 'contain', w: 6.0, h: 5.0 } });
+      g.addImage({ data: paire[1], x: 6.8, y: 1.75, w: 6.0, h: 5.0, sizing: { type: 'contain', w: 6.0, h: 5.0 } });
+    }
+    footer(g);
+  }
 
   // --------------------------------------------- 03 — Conditions financières
   divider('03', 'Conditions\nfinancières');
@@ -174,6 +191,25 @@ export async function generateImPptx(bien, societe) {
   ].filter(Boolean);
   fin2.addText(bullets.map((b) => ({ text: `•   ${b}\n`, options: {} })), { x: 0.75, y: 3.6, w: 7.9, h: 2.4, fontSize: 14, color: INK, fontFace: 'Georgia', lineSpacingMultiple: 1.5 });
   footer(fin2);
+
+  // ------------------------------------------- Points clés de l'investissement
+  const points = (bien?.pointsCles || []).filter((pc) => pc && (pc.titre || pc.detail)).slice(0, 6);
+  if (points.length) {
+    const pk = pptx.addSlide();
+    pk.background = { color: PAPER };
+    brand(pk);
+    sectionHeader(pk, '03', "Points clés de l'investissement");
+    const colW = 3.95, rowH = 2.25;
+    points.forEach((pc, i) => {
+      const col = i % 3, row = Math.floor(i / 3);
+      const x = 0.55 + col * (colW + 0.2), y = 1.8 + row * (rowH + 0.2);
+      pk.addShape('rect', { x, y, w: colW, h: rowH, fill: { color: 'F3F1EC' }, line: { color: 'E2DED4', width: 0.75 } });
+      pk.addShape('rect', { x, y, w: 0.08, h: rowH, fill: { color: '1F8A5F' } });
+      pk.addText(String(pc.titre || '').toUpperCase(), { x: x + 0.25, y: y + 0.2, w: colW - 0.4, h: 0.6, fontSize: 12.5, bold: true, color: INK, fontFace: 'Arial' });
+      pk.addText(String(pc.detail || ''), { x: x + 0.25, y: y + 0.8, w: colW - 0.4, h: rowH - 1.0, fontSize: 11, color: MUTED, fontFace: 'Georgia', lineSpacingMultiple: 1.2, valign: 'top' });
+    });
+    footer(pk);
+  }
 
   // ------------------------------------- 04 — Modalités de cession & contact
   divider('04', 'Modalités de cession\n& contacts');

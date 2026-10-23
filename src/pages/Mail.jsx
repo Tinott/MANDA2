@@ -249,7 +249,7 @@ export default function Mail() {
         </div>
       )}
 
-      <ComposeModal key={composeInit?.consigne || 'vierge'} open={composeOpen} onClose={() => { setComposeOpen(false); setComposeInit(null); }} snapshot={snapshot} initial={composeInit} />
+      <ComposeModal key={composeInit ? `${composeInit.subject || ''}|${composeInit.consigne || ''}|${(composeInit.body || '').length}` : 'vierge'} open={composeOpen} onClose={() => { setComposeOpen(false); setComposeInit(null); }} snapshot={snapshot} initial={composeInit} />
     </div>
   );
 }
@@ -263,7 +263,7 @@ function ComposeModal({ open, onClose, snapshot, initial }) {
   const [to, setTo] = useState(initial?.to || []); // adresses email retenues
   const [input, setInput] = useState('');
   const [subject, setSubject] = useState(initial?.subject || '');
-  const [body, setBody] = useState('');
+  const [body, setBody] = useState(initial?.body || '');
   const [consigne, setConsigne] = useState(initial?.consigne || '');
   const [provider, setProvider] = useState('');
   const [busy, setBusy] = useState(false);

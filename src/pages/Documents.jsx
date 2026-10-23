@@ -1,13 +1,13 @@
 import { useMemo, useState } from 'react';
 import {
-  Plus, FileText, Download, Trash2, Pencil, ChevronRight, ChevronLeft,
+  Plus, FileText, Trash2, Pencil, ChevronRight, ChevronLeft,
   AlertTriangle, Loader2, FolderOpen,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatDate } from '../lib/calc';
 import { DOCUMENT_CATEGORIES, DOCUMENT_TYPES, DOCUMENT_STATUTS, VARIANTES_MANDAT, documentTitle } from '../lib/documentTypes';
 import { fieldsBySections, visibleFields } from '../lib/documentFields';
-import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, Badge, EmptyState, Stepper, BulkDeleteButton } from '../components/ui';
+import { PageHeader, Card, Button, Modal, Field, Input, Select, Textarea, EmptyState, Stepper, BulkDeleteButton } from '../components/ui';
 
 function nextNumero(documents, typeId) {
   const prefix = { mandat_vente: 'MV', mandat_recherche: 'MR', offre_achat: 'OA', avenant: 'AV' }[typeId] || 'DOC';
@@ -20,14 +20,13 @@ function nextNumero(documents, typeId) {
   return `${prefix}-${String(next).padStart(3, '0')}`;
 }
 
-function statutTone(statut) {
-  if (statut === 'Signé') return 'teal';
-  if (statut === 'Signature en cours') return 'brass';
-  return 'default';
-}
 
 export default function Documents() {
-  const { documents, societe, mandats, removeDocument, updateDocument } = useApp();
+  const { documents: tousDocuments, societe, mandats, removeDocument, updateDocument } = useApp();
+  // La bibliothèque du Copilote (analyses, comptes rendus mémorisés) vit dans
+  // le même magasin, mais s'affiche à part des documents juridiques.
+  const documents = useMemo(() => tousDocuments.filter((d) => d.type !== 'bibliotheque'), [tousDocuments]);
+  const bibliotheque = useMemo(() => tousDocuments.filter((d) => d.type === 'bibliotheque'), [tousDocuments]);
   const [categoryFilter, setCategoryFilter] = useState('');
   const [wizardOpen, setWizardOpen] = useState(false);
   const [editingDoc, setEditingDoc] = useState(null);
@@ -144,6 +143,30 @@ export default function Documents() {
         </div>
       </div>
 
+      {bibliotheque.length > 0 && (
+        <Card className="mt-6">
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <div className="font-display text-[15px] text-ink">Bibliothèque du Copilote</div>
+              <div className="text-[12px] text-ink-faint">Ce que l'IA a lu et mémorisé (documents déposés, comptes rendus) — disponible dans toutes ses réponses.</div>
+            </div>
+            <span className="text-[11px] px-2 py-0.5 rounded-full bg-brass-soft text-ink">{bibliotheque.length}</span>
+          </div>
+          <ul className="divide-y divide-line-soft">
+            {bibliotheque.map((d) => (
+              <li key={d.id} className="py-2.5 flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="text-[13px] font-medium text-ink truncate">{d.nom}</div>
+                  <div className="text-[11.5px] text-ink-faint">{d.createdAt ? new Date(d.createdAt).toLocaleDateString('fr-FR') : ''}{d.tags?.length ? ` · ${d.tags.join(', ')}` : ''}</div>
+                  {d.resume && <div className="text-[12px] text-ink-soft mt-1 line-clamp-2 whitespace-pre-wrap">{d.resume}</div>}
+                </div>
+                <button type="button" onClick={() => removeDocument(d.id)} className="shrink-0 p-1.5 rounded-lg text-ink-faint hover:text-rust hover:bg-rust-soft" title="Oublier"><Trash2 size={14} /></button>
+              </li>
+            ))}
+          </ul>
+        </Card>
+      )}
+
       <DocumentWizard open={wizardOpen} onClose={() => setWizardOpen(false)} mandats={mandats} societe={societe} />
       {editingDoc && (
         <DocumentWizard
@@ -231,7 +254,7 @@ function DocumentWizard({ open, onClose, mandats, societe, existing }) {
       }
       setResult({ numero });
       setStep(2);
-    } catch (e) {
+    } catch {
       setError("La génération a échoué — vérifiez les champs et réessayez.");
     } finally {
       setGenerating(false);

@@ -1,13 +1,22 @@
-import { useState } from 'react';
-import { Plus, Receipt, Camera, Loader2, Sparkles, Trash2, Pencil, Car, CheckCircle2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { useFileDrop } from '../hooks/useFileDrop';
+import DropOverlay from '../components/DropOverlay';
+import { hasApiKey, extractReceiptAI } from '../lib/ai';
+import { Receipt, Camera, Loader2, Sparkles, Trash2, Pencil, Car } from 'lucide-react';
 import { useApp } from '../context/AppContext';
-import { calcIndemniteKm, cvBracket, DEPENSE_CATEGORIES } from '../lib/seed';
+import { calcIndemniteKm, DEPENSE_CATEGORIES } from '../lib/seed';
 import { formatEUR, formatDate, tvaMontant } from '../lib/calc';
 import { PageHeader, Card, Button, Modal, Field, Input, Select, Badge, EmptyState, Stepper, Stamp, BulkDeleteButton } from '../components/ui';
 
 export default function NotesFrais() {
   const { notesFrais, removeNoteFrais } = useApp();
   const [captureOpen, setCaptureOpen] = useState(false);
+  const [droppedFile, setDroppedFile] = useState(null);
+  // Un ticket (photo ou PDF) glissé n'importe où sur la page ouvre la saisie.
+  const { dragging } = useFileDrop((files) => {
+    const f = files.find((x) => /^image\//.test(x.type) || x.type === 'application/pdf' || /\.(png|jpe?g|webp|pdf)$/i.test(x.name));
+    if (f) { setDroppedFile(f); setCaptureOpen(true); }
+  });
   const [kmOpen, setKmOpen] = useState(false);
   const [editing, setEditing] = useState(null);
 
@@ -15,6 +24,7 @@ export default function NotesFrais() {
 
   return (
     <div>
+      <DropOverlay visible={dragging} titre="Déposez le justificatif" detail="Photo ou PDF du ticket — montant, date et commerçant reconnus automatiquement" />
       <PageHeader
         eyebrow="Dépenses"
         title="Notes de frais"
@@ -74,7 +84,7 @@ export default function NotesFrais() {
         </>
       )}
 
-      <CaptureWizard open={captureOpen} onClose={() => setCaptureOpen(false)} />
+      <CaptureWizard open={captureOpen} onClose={() => { setCaptureOpen(false); setDroppedFile(null); }} initialFile={droppedFile} />
       <KmModal open={kmOpen} onClose={() => setKmOpen(false)} />
       <EditNoteModal note={editing} onClose={() => setEditing(null)} />
     </div>
@@ -139,8 +149,8 @@ function EditNoteModal({ note, onClose }) {
 
 const CAP_STEPS = ['Photo', 'Vérification', 'Enregistrée'];
 
-function CaptureWizard({ open, onClose }) {
-  const { addNoteFrais } = useApp();
+function CaptureWizard({ open, onClose, initialFile }) {
+  const { addNoteFrais, societe } = useApp();
   const [step, setStep] = useState(0);
   const [status, setStatus] = useState('idle');
   const [preview, setPreview] = useState(null);
@@ -151,27 +161,61 @@ function CaptureWizard({ open, onClose }) {
 
   async function handleFile(e) {
     const file = e.target.files?.[0];
-    if (!file) return;
-    setPreview(URL.createObjectURL(file));
+    if (file) lireFichier(file);
+  }
+
+  // Lecture du justificatif : texte extrait (OCR pour une image, texte natif
+  // pour un PDF), puis champs reconnus par l'IA si elle est disponible —
+  // sinon par les heuristiques locales.
+  async function lireFichier(file) {
+    const estPdf = file.type === 'application/pdf' || /\.pdf$/i.test(file.name);
+    setPreview(estPdf ? null : URL.createObjectURL(file));
     setStatus('reading');
+    const vide = { commercant: '', date: new Date().toISOString().slice(0, 10), montantTTC: '', tauxTva: 20, categorie: 'transport' };
     try {
-      const { ocrReceipt } = await import('../lib/ocr');
-      const result = await ocrReceipt(file);
-      setForm({
-        commercant: result.commercant || '',
-        date: result.date || new Date().toISOString().slice(0, 10),
-        montantTTC: result.montantTTC || '',
-        tauxTva: result.tauxTva || 20,
-        categorie: 'transport',
-      });
-      setStatus('done');
+      let texte = '';
+      let local = null;
+      if (estPdf) {
+        const { extractPdfText } = await import('../lib/pdfExtract');
+        texte = await extractPdfText(file);
+        const { parseReceiptFields } = await import('../lib/ocr');
+        local = parseReceiptFields(texte);
+      } else {
+        const { ocrReceipt } = await import('../lib/ocr');
+        local = await ocrReceipt(file);
+        texte = local.text || '';
+      }
+      let champs = null;
+      if (hasApiKey(societe) && texte.trim().length > 10) {
+        try {
+          const ia = await extractReceiptAI(societe, texte, DEPENSE_CATEGORIES);
+          champs = {
+            commercant: ia.commercant || local?.commercant || '',
+            date: ia.date || local?.date || vide.date,
+            montantTTC: ia.montantTTC ?? local?.montantTTC ?? '',
+            tauxTva: ia.tauxTva ?? local?.tauxTva ?? 20,
+            categorie: DEPENSE_CATEGORIES.some((c) => c.id === ia.categorie) ? ia.categorie : 'autre',
+          };
+        } catch { champs = null; }
+      }
+      if (!champs) {
+        champs = { ...vide, commercant: local?.commercant || '', date: local?.date || vide.date, montantTTC: local?.montantTTC || '', tauxTva: local?.tauxTva || 20 };
+      }
+      setForm(champs);
+      setStatus(champs.montantTTC ? 'done' : 'fallback');
       setStep(1);
     } catch {
-      setForm({ commercant: '', date: new Date().toISOString().slice(0, 10), montantTTC: '', tauxTva: 20, categorie: 'transport' });
+      setForm(vide);
       setStatus('fallback');
       setStep(1);
     }
   }
+
+  useEffect(() => {
+    if (!open || !initialFile) return undefined;
+    const t = setTimeout(() => lireFichier(initialFile), 0);
+    return () => clearTimeout(t);
+  }, [open, initialFile]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function save() {
     const ttc = Number(form.montantTTC) || 0;
@@ -214,7 +258,7 @@ function CaptureWizard({ open, onClose }) {
                 <span className="text-[11.5px] text-ink-faint">JPG, PNG ou PDF</span>
               </>
             )}
-            <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+            <input type="file" accept="image/*,application/pdf" className="hidden" onChange={handleFile} />
           </label>
         </div>
       )}
