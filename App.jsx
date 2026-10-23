@@ -1,0 +1,87 @@
+
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { AppProvider, useApp } from './context/AppContext';
+import { AuthProvider, useAuth } from './context/AuthContext';
+import Sidebar from './components/Sidebar';
+import Login from './pages/Login';
+import ResetPassword from './pages/ResetPassword';
+import Onboarding from './pages/Onboarding';
+import Dashboard from './pages/Dashboard';
+import Mandats from './pages/Mandats';
+import Contacts from './pages/Contacts';
+import Suivi from './pages/Suivi';
+import Documents from './pages/Documents';
+import Facturation from './pages/Facturation';
+import NotesFrais from './pages/NotesFrais';
+import Comptabilite from './pages/Comptabilite';
+import Tresorerie from './pages/Tresorerie';
+import IM from './pages/IM';
+import Promesses from './pages/Promesses';
+import Reporting from './pages/Reporting';
+import Corbeille from './pages/Corbeille';
+import Parametres from './pages/Parametres';
+import UndoToast from './components/UndoToast';
+import Mail from './pages/Mail';
+import Assistant from './pages/Assistant';
+import { NavMemory } from './hooks/useNavMemory';
+
+function LoadingScreen() {
+  return <div className="min-h-screen bg-ink" />;
+}
+
+function Shell() {
+  const { societe } = useApp();
+  if (!societe.onboarded) return <Onboarding />;
+  return (
+    <div className="flex min-h-screen bg-paper">
+      <Sidebar />
+      <main className="flex-1 min-w-0 px-5 sm:px-8 lg:px-10 py-8 max-w-[1400px]">
+        <Routes>
+          <Route path="/" element={<Dashboard />} />
+          <Route path="/mandats" element={<Mandats />} />
+          <Route path="/contacts" element={<Contacts />} />
+          <Route path="/suivi" element={<Suivi />} />
+          <Route path="/documents" element={<Documents />} />
+          <Route path="/facturation" element={<Facturation />} />
+          <Route path="/frais" element={<NotesFrais />} />
+          <Route path="/comptabilite" element={<Comptabilite />} />
+          <Route path="/tresorerie" element={<Tresorerie />} />
+          <Route path="/im" element={<IM />} />
+          <Route path="/mail" element={<Mail />} />
+          <Route path="/assistant" element={<Assistant />} />
+          <Route path="/promesses" element={<Promesses />} />
+          <Route path="/rapports" element={<Reporting />} />
+          <Route path="/corbeille" element={<Corbeille />} />
+          <Route path="/parametres" element={<Parametres />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
+        </Routes>
+      </main>
+      <UndoToast />
+    </div>
+  );
+}
+
+function AuthGate() {
+  const { session, orgId, loadingOrg, recoveryMode } = useAuth();
+  if (recoveryMode) return <ResetPassword />;
+  if (session === undefined) return <LoadingScreen />;
+  if (!session) return <Login />;
+  if (loadingOrg) return <LoadingScreen />;
+  if (!orgId) return <Login />; // étape "créer votre cabinet", gérée dans Login.jsx
+  return (
+    <AppProvider orgId={orgId}>
+      <HashRouter>
+        <NavMemory />
+        <Shell />
+      </HashRouter>
+    </AppProvider>
+  );
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AuthGate />
+    </AuthProvider>
+  );
+}

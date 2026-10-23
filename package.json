@@ -16,6 +16,7 @@
     "autoprefixer": "^10.5.5",
     "date-fns": "^4.4.0",
     "jspdf": "^4.2.1",
+    "jszip": "^3.10.2",
     "lucide-react": "^1.44.0",
     "pdfjs-dist": "^6.3.289",
     "postcss": "^8.5.28",

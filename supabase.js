@@ -1,0 +1,9 @@
+import { createClient } from '@supabase/supabase-js';
+
+const url = import.meta.env.VITE_SUPABASE_URL;
+const key = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
+
+// Le client reste `null` si les variables d'environnement ne sont pas
+// définies — AuthContext.jsx et orgSync.js vérifient sa présence avant
+// de l'utiliser.
+export const supabase = url && key ? createClient(url, key) : null;

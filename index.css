@@ -1,0 +1,92 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,340;9..144,440;9..144,520;9..144,600&family=Inter:wght@400;450;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
+@theme {
+  --color-ink: #14181d;
+  --color-ink-soft: #565f6b;
+  --color-ink-faint: #8992a0;
+  --color-paper: #f3f1ec;
+  --color-paper-raised: #faf9f6;
+  --color-surface: #ffffff;
+  --color-line: #e2ded4;
+  --color-line-soft: #ebe8e0;
+  --color-brass: #a06a2c;
+  --color-brass-deep: #7c5220;
+  --color-brass-soft: #f1e4cd;
+  --color-teal: #1f4e4a;
+  --color-teal-soft: #e2ece9;
+  --color-rust: #ac5236;
+  --color-rust-soft: #f5e4dd;
+
+  --font-display: 'Fraunces', 'Georgia', serif;
+  --font-sans: 'Inter', -apple-system, sans-serif;
+  --font-mono: 'IBM Plex Mono', ui-monospace, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--color-paper);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  font-feature-settings: "cv11", "ss01";
+}
+
+::selection {
+  background: var(--color-brass-soft);
+  color: var(--color-brass-deep);
+}
+
+.font-display { font-family: var(--font-display); }
+.font-mono { font-family: var(--font-mono); }
+
+.ledger-bg {
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent,
+    transparent 27px,
+    var(--color-line-soft) 27px,
+    var(--color-line-soft) 28px
+  );
+}
+
+.tabular { font-variant-numeric: tabular-nums; }
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #d8d3c6; border-radius: 8px; }
+::-webkit-scrollbar-thumb:hover { background: #c9c3b2; }
+
+:focus-visible {
+  outline: 2px solid var(--color-brass);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    transition-duration: 0.001ms !important;
+  }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.animate-rise { animation: rise 0.35s ease-out both; }
+
+@keyframes stampIn {
+  0% { opacity: 0; transform: scale(1.35) rotate(-8deg); }
+  60% { opacity: 1; transform: scale(0.96) rotate(-8deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-8deg); }
+}
+.animate-stamp { animation: stampIn 0.5s cubic-bezier(.2,.8,.2,1) both; }
