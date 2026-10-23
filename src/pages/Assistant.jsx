@@ -161,11 +161,14 @@ export default function Assistant() {
     if (!pre) return undefined;
     window.history.replaceState({}, '');
     const t = setTimeout(() => {
+      if (Array.isArray(pre.attachments) && pre.attachments.length) {
+        setAttachments((a) => [...a.filter((x) => !pre.attachments.some((p) => p.nom === x.nom)), ...pre.attachments.map((p) => ({ id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, nom: p.nom, texte: String(p.texte || '').slice(0, 60000), methode: 'mails' }))].slice(-6));
+      }
       if (pre.question) { setInput(pre.question); }
       if (pre.actionId) { const a = ACTIONS.find((x) => x.id === pre.actionId); if (a) { setAction(a); setVals(pre.vals || {}); } }
     }, 0);
     return () => clearTimeout(t);
-  }, [location.state]);
+  }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Dictée (reconnaissance vocale du navigateur) ---
   function toggleDictee(onText) {

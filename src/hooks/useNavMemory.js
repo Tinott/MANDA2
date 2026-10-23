@@ -33,6 +33,16 @@ export function usePersistedState(key, initial) {
   return [value, setValue];
 }
 
+// Variante durable (localStorage) : survit à la fermeture de l'onglet,
+// reste propre à ce navigateur (jamais synchronisée dans le cloud).
+export function useLocalState(key, initial) {
+  const [value, setValue] = useState(() => {
+    try { const raw = localStorage.getItem(PREFIX + key); return raw === null ? initial : JSON.parse(raw); } catch { return initial; }
+  });
+  useEffect(() => { try { localStorage.setItem(PREFIX + key, JSON.stringify(value)); } catch { /* quota */ } }, [key, value]);
+  return [value, setValue];
+}
+
 export function NavMemory() {
   const location = useLocation();
   const navigate = useNavigate();

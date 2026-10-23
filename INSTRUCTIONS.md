@@ -131,6 +131,20 @@ IA.
   saisi dans Paramètres › Intégrations. LinkedIn n'autorise aucune
   application à lire un compte (réseau, messages) : rien d'autre n'est
   techniquement possible, l'appli ne le promet pas.
+- *Mails importés* (boîtes hors Google/Microsoft : Hostinger, OVH…) :
+  dans la Boîte mail, « Importer des mails » ou glisser des fichiers
+  **.eml** (un message) / **.mbox** (une boîte) — décodage MIME complet
+  (`emlParser.js`), conservés dans le navigateur uniquement. Même lecture
+  que les boîtes connectées (contexte dossiers, réponse rédigée par l'IA →
+  « Copier la réponse », ou envoi via un compte Gmail/Outlook connecté), et
+  bouton **« Traiter avec le Copilote »** : il lit les 40 derniers mails,
+  propose les réponses, note les échanges sur les contacts, programme les
+  relances, signale offres / demandes / échéances.
+  Export côté messagerie : Roundcube/Hostinger → ouvrir le message → « … »
+  → Télécharger (.eml) ; en masse : Thunderbird (compte IMAP) → sélection
+  → clic droit → « Enregistrer sous » (.eml) ou extension ImportExportTools
+  NG → exporter le dossier en .mbox ; Gmail → Google Takeout (.mbox).
+  Les .msg d'Outlook ne sont pas lus : exporter en .eml.
 - *Briefing* : chaque action du point du jour a un bouton « Faire » qui la
   confie au Copilote.
 - *IM en un glisser-déposer* : dans l'assistant IM, déposez d'un coup bail,
