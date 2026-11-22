@@ -9,6 +9,7 @@ export const TRASH_TYPE_LABEL = {
   courrier: 'Courrier / mail',
   dossier: 'Dossier',
   document: 'Document juridique',
+  tache: 'Rappel / tâche',
 };
 
 export const TRASH_TYPE_TONE = {
@@ -21,6 +22,7 @@ export const TRASH_TYPE_TONE = {
   courrier: 'default',
   dossier: 'teal',
   document: 'brass',
+  tache: 'default',
 };
 
 export function describeTrashEntry(type, d) {
@@ -42,7 +44,9 @@ export function describeTrashEntry(type, d) {
     case 'dossier':
       return { title: d.nom || 'Dossier', sub: d.type === 'IM' ? 'Memorandum' : 'Dossier de classement' };
     case 'document':
-      return { title: d.numero ? `${d.numero}` : (d.type || 'Document'), sub: d.statut || '' };
+      return { title: d.numero ? `${d.numero}` : (d.nom || d.type || 'Document'), sub: d.statut || '' };
+    case 'tache':
+      return { title: d.titre || 'Rappel', sub: d.date || '' };
     default:
       return { title: 'Élément', sub: '' };
   }

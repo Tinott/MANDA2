@@ -1,8 +1,80 @@
-# MANDA2 — Refonte complète (lots 1 à 5)
+# MANDA2 — Refonte complète (lots 1 à 6)
 
 Paquet prêt à poser : **aucun patch manuel**. Build de production ✓, lint 0
 erreur, documents testés au runtime (PDF des 3 mandats, facture, IM .pptx) et
 relus mot à mot, reconnaissance email→dossier testée unitairement.
+
+## Lot 6 (22/11) — mise à jour sans risque pour les données
+
+**Rien à faire dans Supabase pour cette mise à jour** : il suffit de pousser
+le code (Vercel redéploie). L'Edge Function `claude-proxy` n'a pas changé.
+Seule action recommandée si elle n'a pas déjà été faite : exécuter UNE FOIS
+`supabase/migrations/20261119_org_data_history.sql` (Supabase → SQL Editor)
+pour activer l'historique des versions côté serveur.
+
+### Ce que voit un utilisateur existant à la mise à jour
+À la première ouverture, l'application lit le serveur et **n'écrit rien** :
+ses contacts, notes, échanges, mandats, factures et la corbeille sont
+affichés à l'identique. La première écriture n'a lieu qu'à sa première
+saisie, et ne touche que l'enregistrement modifié.
+
+### Synchronisation (réécrite : `syncMerge.js`, `syncEngine.js`, `orgSync.js`)
+- **Fusion enregistrement par enregistrement** : deux appareils ou deux
+  utilisateurs qui saisissent en même temps ne s'écrasent plus ; pour une
+  même fiche, la modification la plus récente l'emporte.
+- **Écriture conditionnelle** : une sauvegarde n'est acceptée que si le
+  serveur n'a pas changé entre-temps ; sinon l'appli relit, fusionne, renvoie.
+- **Aucun envoi avant la réponse du serveur** ; un appareil neuf affiche
+  « Chargement de vos données… » au lieu de l'accueil de premier lancement.
+- **Saisie puis fermeture immédiate, ou hors connexion** : conservée sur
+  l'appareil et envoyée à la réouverture / reconnexion.
+- **Suppressions** : corbeille partagée entre appareils ; une suppression
+  définitive ne « ressuscite » pas depuis un appareil resté ouvert.
+- **Un ancien onglet resté ouvert** sur l'ancienne version peut encore
+  écraser le serveur : dès qu'un appareil à jour se synchronise, les données
+  sont rétablies automatiquement. Conseil : demander aux utilisateurs de
+  recharger la page une fois après le déploiement.
+- **Filets de sécurité** : copie locale quotidienne sur chaque appareil
+  (14 jours, Paramètres → Historique des versions), historique serveur
+  (300 versions, si la migration SQL est exécutée), export/import manuel.
+  Restaurer une version ne fait rien disparaître : ce qui a été créé depuis
+  est conservé.
+- Tests : `node tests/sync.sim.mjs` (3 appareils, 3 600 opérations
+  aléatoires, pannes réseau) — à relancer après toute modification de la
+  synchronisation.
+
+### Nouveautés fonctionnelles
+- **Contacts** : les notes et les derniers échanges sont affichés
+  directement sur chaque carte (bloc défilant) ; nouvelle vue **Liste** avec
+  les notes complètes ; bouton « Noter un échange » sans ouvrir la fiche ; la
+  recherche porte aussi sur le contenu des échanges.
+- **Rappels & agenda** (tableau de bord) : saisie en une ligne, case à
+  cocher, export vers Outlook / Google / Apple (.ics) ; les rappels du jour
+  et en retard remontent dans « À faire & échéances » et dans le briefing.
+- **Copilote partout** : bouton en bas à droite de chaque page (Ctrl/⌘ K) ;
+  la demande part directement.
+- **Copilote, nouvelles actions** : créer / terminer / reporter un rappel,
+  passer une facture en envoyée ou payée, tracer un courrier, mettre un
+  élément à la corbeille (restaurable ; jamais une facture émise), mémoriser
+  une consigne permanente.
+- **Consignes permanentes** (Paramètres) : ton, signature, habitudes —
+  appliquées à chaque demande ; le Copilote en ajoute quand on lui dit
+  « désormais… ».
+- **Corrections** : deux actions du Copilote enchaînées sur la même fiche
+  n'en perdent plus une ; les dates de signature / réitération d'une promesse
+  créée par le Copilote arrivent dans les bons champs ; les requêtes au
+  Copilote restent sous la taille maximale acceptée par le serveur ; le
+  tableau de bord s'affiche aussi pour un cabinet qui n'a que des contacts.
+
+### Récupération manuelle d'une copie locale (sans ouvrir l'application)
+Sur un appareil qui a utilisé l'appli avant l'incident et ne l'a pas
+rouverte depuis : ouvrir dans le navigateur l'adresse
+`https://manda-2.vercel.app/manifest.webmanifest` (fichier statique : l'appli
+ne se lance pas), puis F12 → onglet Console → coller :
+`copy(JSON.stringify(Object.fromEntries(Object.entries(localStorage))))`
+→ Entrée. Le presse-papiers contient toutes les données : les coller dans
+un fichier `recuperation.json` (Bloc-notes → Enregistrer sous), puis dans
+l'appli : Paramètres → Importer une sauvegarde → ce fichier.
 
 ## ⚠️ Mise à jour lot 5 : l'Edge Function DOIT être redéployée
 

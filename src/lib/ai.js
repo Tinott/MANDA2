@@ -296,19 +296,31 @@ export async function askAssistant(societe, { history, snapshot, alerts, emails 
 //        documents déposés dans la conversation et de la recherche web.
 // ---------------------------------------------------------------------------
 export async function askAgent(societe, { history, snapshot, alerts, attachments, tools, execute, onAction }) {
-  const piecesJointes = (attachments || []).map((a, i) => `--- PIÈCE JOINTE ${i + 1} : ${a.nom} ---\n${(a.texte || '').slice(0, 60000)}`).join('\n\n');
+  // Budget de taille : le serveur refuse les requêtes trop volumineuses.
+  // Les pièces jointes se partagent une enveloppe commune, et l'historique
+  // est raccourci par le début si nécessaire.
+  const liste = attachments || [];
+  const parPiece = Math.max(8000, Math.min(60000, Math.floor(150000 / Math.max(1, liste.length))));
+  const piecesJointes = liste.map((a, i) => {
+    const t = a.texte || '';
+    return `--- PIÈCE JOINTE ${i + 1} : ${a.nom} ---\n${t.slice(0, parPiece)}${t.length > parPiece ? '\n[… document tronqué : demande à l\'utilisateur de le déposer seul si la suite est nécessaire]' : ''}`;
+  }).join('\n\n');
+  let hist = [...(history || [])];
+  const tailleHist = () => hist.reduce((n, m) => n + String(m.content || '').length, 0);
+  while (hist.length > 1 && tailleHist() > 60000) hist = hist.slice(hist[1]?.role === 'assistant' ? 2 : 1);
+  const consignes = String(societe?.copiloteInstructions || '').trim();
   return runAgent(societe, {
     system:
-      `Tu es la collaboratrice administrative et commerciale intégrée de « ${societe?.nom || 'Mandat'} », application de gestion d'un broker en immobilier d'entreprise (Capital Markets) en France, dirigée par ${societe?.contactNom || "l'utilisateur"}. Tu agis comme une secrétaire de direction ultra compétente, proactive et fiable : tu ne te contentes pas de répondre, tu FAIS — grâce à tes outils tu crées et mets à jour les contacts, notes d'échanges, lignes de suivi commercial, mandats, promesses, factures brouillon, notes de frais ; tu prépares les emails (composer pré-rempli, l'utilisateur envoie), les IM (assistant pré-rempli), les documents juridiques (PDF brouillon) ; tu rapproches investisseurs et biens ; tu mémorises dans la bibliothèque ce qui doit l'être ; tu cherches sur le web quand il faut une information externe (toujours sourcée et datée).
+      `Tu es la collaboratrice administrative et commerciale intégrée de « ${societe?.nom || 'Mandat'} », application de gestion d'un broker en immobilier d'entreprise (Capital Markets) en France, dirigée par ${societe?.contactNom || "l'utilisateur"}. Tu agis comme une secrétaire de direction ultra compétente, proactive et fiable : tu ne te contentes pas de répondre, tu FAIS — grâce à tes outils tu crées et mets à jour les contacts, notes d'échanges, lignes de suivi commercial, mandats, promesses, factures brouillon, notes de frais ; tu prépares les emails (composer pré-rempli, l'utilisateur envoie), les IM (assistant pré-rempli), les documents juridiques (PDF brouillon) ; tu rapproches investisseurs et biens ; tu tiens l'agenda (rappels datés avec creer_rappel dès qu'une suite est à donner : « rappelle-moi », rendez-vous, relance, pièce à envoyer) ; tu mets à jour les factures (envoyée, payée) ; tu traces les courriers ; tu mémorises dans la bibliothèque ce qui doit l'être, et les consignes permanentes de l'utilisateur avec memoriser_consigne ; tu cherches sur le web quand il faut une information externe (toujours sourcée et datée).
 
-Méthode : (1) comprends la demande et ce qu'elle implique concrètement dans l'application ; (2) consulte les données (instantané ci-dessous, outils lister_donnees / rechercher_contacts) avant d'agir, pour éviter les doublons et retrouver les identifiants ; (3) agis avec les outils, en enchaînant les étapes nécessaires sans redemander ce que tu peux déduire ; (4) réponds brièvement en français : ce que tu as fait, ce qu'il reste à valider par l'utilisateur, et ce que tu suggères ensuite (échéance, relance, document). Ne demande confirmation que pour les décisions réellement ambiguës. N'invente jamais un chiffre, un nom ou une date : si une donnée manque, dis-le ou cherche-la. Quand tu rédiges (emails, posts LinkedIn, comptes rendus, NDA, lettres de process, index de data room, tableaux comparatifs, scoring d'offres, tombstones), applique : ${REGLES} Pour un post LinkedIn : sobre, professionnel, sans emoji excessif, avec 3 à 5 hashtags en fin. Dates au format français dans tes réponses, montants en euros formatés.`,
+Méthode : (1) comprends la demande et ce qu'elle implique concrètement dans l'application ; (2) consulte les données (instantané ci-dessous, outils lister_donnees / rechercher_contacts) avant d'agir, pour éviter les doublons et retrouver les identifiants ; (3) agis avec les outils, en enchaînant les étapes nécessaires sans redemander ce que tu peux déduire ; (4) réponds brièvement en français : ce que tu as fait, ce qu'il reste à valider par l'utilisateur, et ce que tu suggères ensuite (échéance, relance, document). Ne demande confirmation que pour les décisions réellement ambiguës. N'invente jamais un chiffre, un nom ou une date : si une donnée manque, dis-le ou cherche-la. Quand tu rédiges (emails, posts LinkedIn, comptes rendus, NDA, lettres de process, index de data room, tableaux comparatifs, scoring d'offres, tombstones), applique : ${REGLES} Pour un post LinkedIn : sobre, professionnel, sans emoji excessif, avec 3 à 5 hashtags en fin. Dates au format français dans tes réponses, montants en euros formatés. Quand l'utilisateur dicte un compte rendu d'appel ou de rendez-vous, fais tout d'un coup : note l'échange sur la fiche contact (ajouter_interaction), mets à jour ses critères s'il en a donné, crée le rappel de suite, et propose l'email de suivi. Tu ne supprimes rien sans demande explicite (et la suppression va à la corbeille, restaurable).${consignes ? `\n\nCONSIGNES PERMANENTES DE L'UTILISATEUR (à respecter systématiquement, elles priment sur tes habitudes de rédaction) :\n${consignes.slice(0, 4000)}` : ''}`,
     messages: [
       {
         role: 'user',
         content: `DONNÉES ACTUELLES DE L'APPLICATION (instantané — utilise les outils pour le détail) :\n${JSON.stringify(snapshot).slice(0, 90000)}${alerts?.length ? `\n\nALERTES CALCULÉES PAR L'APPLICATION :\n${JSON.stringify(alerts).slice(0, 15000)}` : ''}${piecesJointes ? `\n\nDOCUMENTS DÉPOSÉS DANS LA CONVERSATION :\n${piecesJointes}` : ''}`,
       },
       { role: 'assistant', content: "Bien reçu : j'ai l'état complet de l'application, les échéances et les documents déposés. Dites-moi ce que vous voulez que je fasse." },
-      ...history,
+      ...hist,
     ],
     tools: [...(tools || []), ...webSearchTool(3)],
     execute,
@@ -477,7 +489,7 @@ export async function postLinkedIn(societe, { sujet, snapshot }) {
 // ---------------------------------------------------------------------------
 // Instantané compact de l'application, injecté dans les prompts.
 // ---------------------------------------------------------------------------
-export function buildAppSnapshot({ societe, mandats, promesses, factures, notesFrais, contacts, prospects, courriers, documents, dossiers, registre }) {
+export function buildAppSnapshot({ societe, mandats, promesses, factures, notesFrais, contacts, prospects, courriers, documents, dossiers, taches, registre }) {
   const lite = (arr, keys, max = 60) => (arr || []).slice(0, max).map((o) => Object.fromEntries(keys.filter((k) => o[k] !== undefined && o[k] !== '' && !(Array.isArray(o[k]) && !o[k].length)).map((k) => [k, o[k]])));
   const contactsLite = (contacts || []).slice(0, 250).map((c) => {
     const inter = (c.interactions || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || '')).slice(0, 2);
@@ -486,7 +498,7 @@ export function buildAppSnapshot({ societe, mandats, promesses, factures, notesF
       email: c.email, tel: c.telephone, vehicule: c.vehicule, classes: c.classesActifs, zones: c.zones,
       ticketMin: c.ticketMin, ticketMax: c.ticketMax, rendementCible: c.rendementCible, strategie: c.strategie,
       statut: c.statutRelation, prochaineRelance: c.prochaineRelance, patrimoine: c.patrimoine ? String(c.patrimoine).slice(0, 200) : undefined,
-      notes: c.notes ? String(c.notes).slice(0, 200) : undefined,
+      notes: c.notes ? String(c.notes).slice(0, 400) : undefined,
       derniersEchanges: inter.length ? inter.map((i) => `${i.date || ''} ${i.type || ''}: ${(i.note || '').slice(0, 120)}`) : undefined,
     };
     return Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined && v !== '' && !(Array.isArray(v) && !v.length)));
@@ -498,7 +510,7 @@ export function buildAppSnapshot({ societe, mandats, promesses, factures, notesF
     dateDuJour: new Date().toISOString().slice(0, 10),
     societe: { nom: societe?.nom, contactNom: societe?.contactNom, telephone: societe?.telephone, email: societe?.email, linkedin: societe?.linkedinUrl },
     mandats: lite(mandats, ['id', 'numero', 'adresse', 'typeBien', 'typeMandat', 'variante', 'mandant', 'client', 'prixVente', 'loyerAnnuel', 'surface', 'statut', 'dateSignature', 'dateDebutMandat', 'dateFinMandat']),
-    promesses: lite(promesses, ['id', 'bienAdresse', 'vendeur', 'acquereur', 'prixVente', 'honorairesHT', 'redevable', 'notaire', 'dateSignature', 'dateLimiteConditionsSuspensives', 'dateReiteration', 'dateProchaineRelance', 'statut']),
+    promesses: lite(promesses, ['id', 'bienAdresse', 'vendeur', 'acquereur', 'prixVente', 'honorairesHT', 'redevable', 'notaire', 'dateSignaturePromesse', 'dateLimiteConditionsSuspensives', 'dateReiterationPrevue', 'dateProchaineRelance', 'statut', 'notes']),
     factures: lite(factures, ['id', 'numero', 'client', 'bienAdresse', 'montantHT', 'montantTTC', 'dateEmission', 'statut', 'mandatRef']),
     notesFrais: lite(notesFrais, ['id', 'date', 'commercant', 'categorieLabel', 'montantTTC'], 40),
     contacts: contactsLite,
@@ -506,6 +518,8 @@ export function buildAppSnapshot({ societe, mandats, promesses, factures, notesF
     courriers: lite(courriers, ['id', 'objet', 'societe', 'nomContact', 'date', 'dateRelancePrevue', 'statut'], 30),
     documentsJuridiques: lite((documents || []).filter((d) => d.type !== 'bibliotheque'), ['id', 'numero', 'typeId', 'variante', 'statut', 'createdAt'], 40),
     bibliotheque,
+    rappels: (taches || []).filter((t) => !t.fait).sort((a, b) => (a.date || '').localeCompare(b.date || '')).slice(0, 60)
+      .map((t) => Object.fromEntries(Object.entries({ id: t.id, titre: t.titre, date: t.date, heure: t.heure, contact: t.contactNom, note: t.note ? String(t.note).slice(0, 200) : undefined }).filter(([, v]) => v !== undefined && v !== ''))),
     dossiersIM: lite((dossiers || []).filter((d) => d.type === 'IM'), ['id', 'nom', 'statut', 'createdAt'], 30),
     registre: registre ? { totalProduitsHT: registre.totalProduitsHT, totalChargesHT: registre.totalChargesHT } : undefined,
   };

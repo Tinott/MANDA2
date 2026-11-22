@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import {
   Bot, Send, Loader2, Sparkles, AlertCircle, RefreshCw, ArrowRight, CalendarCheck,
@@ -132,7 +132,21 @@ export default function Assistant() {
   const snapshot = useMemo(() => buildAppSnapshot(app), [app]);
   const alerts = useMemo(() => buildAlerts(app), [app]);
   const aDesDonnees = (app.mandats?.length || 0) + (app.promesses?.length || 0) + (app.factures?.length || 0) + (app.prospects?.length || 0) + (app.contacts?.length || 0) > 0;
-  const execute = useMemo(() => createToolExecutor({ app, navigate, societe }), [app, navigate, societe]);
+  // Les outils lisent toujours l'état le plus récent (appRef), et une courte
+  // pause après chaque action laisse l'application enregistrer le changement
+  // avant l'action suivante — sinon deux actions enchaînées sur la même fiche
+  // partiraient de la même version et la seconde effacerait la première.
+  const appRef = useRef(app);
+  useLayoutEffect(() => { appRef.current = app; });
+  const execute = useMemo(() => {
+    const run = createToolExecutor({ getApp: () => appRef.current, navigate });
+    return async (name, args) => {
+      const res = await run(name, args);
+      await new Promise((r) => setTimeout(r, 60));
+      return res;
+    };
+  }, [navigate]);
+  const autoRef = useRef(null);
 
   function scroll() { setTimeout(() => bottomRef.current?.scrollIntoView({ behavior: 'smooth' }), 60); }
   function pushMsg(m) { setHistory((h) => [...h, m].slice(-60)); }
@@ -164,11 +178,21 @@ export default function Assistant() {
       if (Array.isArray(pre.attachments) && pre.attachments.length) {
         setAttachments((a) => [...a.filter((x) => !pre.attachments.some((p) => p.nom === x.nom)), ...pre.attachments.map((p) => ({ id: `${Date.now()}_${Math.random().toString(36).slice(2, 6)}`, nom: p.nom, texte: String(p.texte || '').slice(0, 60000), methode: 'mails' }))].slice(-6));
       }
-      if (pre.question) { setInput(pre.question); }
+      if (pre.question && pre.auto) { autoRef.current = pre.question; setInput(pre.question); }
+      else if (pre.question) { setInput(pre.question); }
       if (pre.actionId) { const a = ACTIONS.find((x) => x.id === pre.actionId); if (a) { setAction(a); setVals(pre.vals || {}); } }
     }, 0);
     return () => clearTimeout(t);
   }, [location.state]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Question posée depuis le bouton Copilote d'une autre page : envoi direct.
+  useEffect(() => {
+    if (!autoRef.current || busy || input !== autoRef.current) return undefined;
+    const q = autoRef.current;
+    autoRef.current = null;
+    const t = setTimeout(() => { if (hasApiKey(societe)) send(q); }, 0);
+    return () => clearTimeout(t);
+  }, [input, busy]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // --- Dictée (reconnaissance vocale du navigateur) ---
   function toggleDictee(onText) {

@@ -24,18 +24,37 @@ import UndoToast from './components/UndoToast';
 import Mail from './pages/Mail';
 import Assistant from './pages/Assistant';
 import { NavMemory } from './hooks/useNavMemory';
+import QuickAsk from './components/QuickAsk';
 
 function LoadingScreen() {
   return <div className="min-h-screen bg-ink" />;
 }
 
+// Écran d'attente quand cet appareil n'a encore aucune donnée : on attend la
+// réponse du serveur avant de proposer la création du cabinet — sinon un
+// nouvel appareil (ou une connexion lente) afficherait l'accueil « premier
+// lancement » à quelqu'un dont le cabinet existe déjà.
+function AttenteServeur({ erreur, onRetry }) {
+  return (
+    <div className="min-h-screen bg-ink flex items-center justify-center px-6">
+      <div className="text-center">
+        <div className="font-display text-[20px] text-white">{erreur ? 'Connexion au serveur impossible' : 'Chargement de vos données…'}</div>
+        <p className="text-white/60 text-[13px] mt-2 max-w-sm">
+          {!erreur ? 'Un instant.' : onRetry ? 'Vérifiez votre connexion internet, puis réessayez — vos données sont en sécurité sur le serveur.' : 'Vérifiez votre connexion internet. Nouvelle tentative automatique en cours — vos données sont en sécurité sur le serveur.'}
+        </p>
+        {onRetry && <button type="button" onClick={onRetry} className="mt-4 rounded-lg bg-white/10 hover:bg-white/15 text-white text-[13px] px-4 py-2">Réessayer</button>}
+      </div>
+    </div>
+  );
+}
+
 function Shell() {
-  const { societe } = useApp();
-  if (!societe.onboarded) return <Onboarding />;
+  const { societe, cloudReady, cloudStatus } = useApp();
+  if (!societe.onboarded) return cloudReady ? <Onboarding /> : <AttenteServeur erreur={cloudStatus === 'error'} />;
   return (
     <div className="flex min-h-screen bg-paper">
       <Sidebar />
-      <main className="flex-1 min-w-0 px-5 sm:px-8 lg:px-10 py-8 max-w-[1400px]">
+      <main className="flex-1 min-w-0 px-5 sm:px-8 lg:px-10 pt-8 pb-24 max-w-[1400px]">
         <Routes>
           <Route path="/" element={<Dashboard />} />
           <Route path="/mandats" element={<Mandats />} />
@@ -57,16 +76,18 @@ function Shell() {
         </Routes>
       </main>
       <UndoToast />
+      <QuickAsk />
     </div>
   );
 }
 
 function AuthGate() {
-  const { session, orgId, loadingOrg, recoveryMode } = useAuth();
+  const { session, orgId, loadingOrg, recoveryMode, orgError, retryOrg } = useAuth();
   if (recoveryMode) return <ResetPassword />;
   if (session === undefined) return <LoadingScreen />;
   if (!session) return <Login />;
   if (loadingOrg) return <LoadingScreen />;
+  if (orgError && !orgId) return <AttenteServeur erreur onRetry={retryOrg} />;
   if (!orgId) return <Login />; // étape "créer votre cabinet", gérée dans Login.jsx
   return (
     <AppProvider orgId={orgId}>

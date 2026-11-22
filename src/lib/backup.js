@@ -1,12 +1,13 @@
 const SNAPSHOT_VERSION = 1;
 
-export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents }) {
+export function buildSnapshot({ societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents, taches, deleted, meta }) {
   return {
     app: 'mandat',
     version: SNAPSHOT_VERSION,
     exportedAt: new Date().toISOString(),
     societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
     promesses, contacts, prospects, courriers, trash, contactCategories, documents,
+    taches: taches || [], deleted: deleted || {}, meta: meta || {},
   };
 }
 
@@ -24,15 +25,36 @@ export function downloadSnapshot(state) {
   return snapshot.exportedAt;
 }
 
+// Un export brut du stockage du navigateur (clés « mandat:contacts »,
+// « mandat:mandats »… copiées depuis les outils de développement) est aussi
+// accepté : c'est la voie de récupération quand un appareil détient encore
+// une copie locale des données.
+export function fromLocalStorageDump(obj) {
+  if (!obj || typeof obj !== 'object') return null;
+  const keys = Object.keys(obj).filter((k) => k.startsWith('mandat:'));
+  if (!keys.length) return null;
+  const out = {};
+  keys.forEach((k) => {
+    const name = k.slice('mandat:'.length);
+    try { out[name] = typeof obj[k] === 'string' ? JSON.parse(obj[k]) : obj[k]; } catch { /* valeur non JSON : ignorée */ }
+  });
+  if (!out.societe && !out.contacts && !out.mandats) return null;
+  return { app: 'mandat', version: SNAPSHOT_VERSION, exportedAt: new Date().toISOString(), societe: out.societe || {}, ...out };
+}
+
 export function readSnapshotFile(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const data = JSON.parse(reader.result);
+        let data = JSON.parse(reader.result);
         if (data.app !== 'mandat' || !data.societe) {
-          reject(new Error("Ce fichier ne correspond pas à une sauvegarde Mandat valide."));
-          return;
+          const dump = fromLocalStorageDump(data);
+          if (!dump) {
+            reject(new Error("Ce fichier ne correspond pas à une sauvegarde Mandat valide."));
+            return;
+          }
+          data = dump;
         }
         resolve(data);
       } catch {

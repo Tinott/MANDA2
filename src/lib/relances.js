@@ -7,7 +7,7 @@ function days(dateStr) {
   return Math.round((new Date(dateStr) - new Date(new Date().toDateString())) / 86400000);
 }
 
-export function buildAlerts({ promesses = [], mandats = [], factures = [], prospects = [], courriers = [], contacts = [] }) {
+export function buildAlerts({ promesses = [], mandats = [], factures = [], prospects = [], courriers = [], contacts = [], taches = [] }) {
   const alerts = [];
   const push = (level, label, detail, link, d) => alerts.push({ level, label, detail, link, days: d });
 
@@ -60,6 +60,13 @@ export function buildAlerts({ promesses = [], mandats = [], factures = [], prosp
       const derniere = (c.interactions || []).slice().sort((a, b) => (b.date || '').localeCompare(a.date || ''))[0];
       push(d < -7 ? 'warn' : 'info', `Relancer ${nom}`, derniere?.note ? `Dernier échange : ${derniere.note.slice(0, 90)}` : 'Relance planifiée sur la fiche contact.', '/contacts', d);
     }
+  });
+
+  taches.filter((t) => !t.fait).forEach((t) => {
+    const d = days(t.date);
+    if (d === null || d > 0) return;
+    const detail = [t.heure ? `à ${t.heure}` : '', t.contactNom || '', t.note ? String(t.note).slice(0, 80) : ''].filter(Boolean).join(' · ');
+    push(d < 0 ? 'urgent' : 'warn', d < 0 ? `Rappel en retard (${-d} j) — ${t.titre}` : `Aujourd'hui — ${t.titre}`, detail || 'Rappel planifié.', '/', d);
   });
 
   const order = { critical: 0, urgent: 1, warn: 2, info: 3 };

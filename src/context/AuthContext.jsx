@@ -12,6 +12,8 @@ export function AuthProvider({ children }) {
   const [loadingOrg, setLoadingOrg] = useState(false);
   const [error, setError] = useState('');
   const [recoveryMode, setRecoveryMode] = useState(false);
+  const [orgError, setOrgError] = useState(false);
+  const [tentative, setTentative] = useState(0);
 
   useEffect(() => {
     if (!supabase) { setSession(null); return; }
@@ -26,20 +28,37 @@ export function AuthProvider({ children }) {
     return () => sub.subscription.unsubscribe();
   }, []);
 
+  // Recherche du cabinet de l'utilisateur. Deux précautions :
+  //  · on ne relance la recherche que si l'UTILISATEUR change (pas à chaque
+  //    renouvellement silencieux de la session, qui rechargeait toute
+  //    l'application et fermait les fenêtres de saisie en cours) ;
+  //  · une erreur réseau n'est jamais confondue avec « aucun cabinet » —
+  //    sinon l'écran « Créer votre cabinet » s'afficherait à quelqu'un qui en
+  //    a déjà un, au risque d'en créer un second, vide.
+  const userId = session?.user?.id || null;
   useEffect(() => {
-    if (!session) { setOrgId(null); setOrgName(''); return; }
-    setLoadingOrg(true);
-    supabase
-      .from('memberships')
-      .select('org_id, organizations(name)')
-      .eq('user_id', session.user.id)
-      .limit(1)
-      .maybeSingle()
-      .then(({ data }) => {
-        if (data) { setOrgId(data.org_id); setOrgName(data.organizations?.name || ''); }
-        setLoadingOrg(false);
-      });
-  }, [session]);
+    if (!userId) { setOrgId(null); setOrgName(''); setOrgError(false); return undefined; }
+    let annule = false;
+    setLoadingOrg(true); setOrgError(false);
+    (async () => {
+      for (let essai = 0; essai < 4 && !annule; essai += 1) {
+        let res = null;
+        try {
+          res = await supabase.from('memberships').select('org_id, organizations(name)').eq('user_id', userId).limit(1).maybeSingle();
+        } catch { res = { error: true }; }
+        if (annule) return;
+        if (!res?.error) {
+          if (res.data) { setOrgId(res.data.org_id); setOrgName(res.data.organizations?.name || ''); }
+          else { setOrgId(null); setOrgName(''); }
+          setLoadingOrg(false);
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 700 * (essai + 1)));
+      }
+      if (!annule) { setOrgError(true); setLoadingOrg(false); }
+    })();
+    return () => { annule = true; };
+  }, [userId, tentative]);
 
   async function signUp(email, password) {
     setError('');
@@ -98,7 +117,7 @@ export function AuthProvider({ children }) {
 
   return (
     <AuthCtx.Provider value={{
-      session, orgId, orgName, loadingOrg, error, recoveryMode,
+      session, orgId, orgName, loadingOrg, error, recoveryMode, orgError, retryOrg: () => setTentative((n) => n + 1),
       signUp, signIn, signOut, createOrganization, requestPasswordReset, updatePassword,
     }}>
       {children}

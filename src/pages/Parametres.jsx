@@ -1,10 +1,10 @@
 import { useState, useRef } from 'react';
-import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Cloud, Check, Camera, X, LogOut } from 'lucide-react';
+import { Plus, Trash2, Users, Building2, Percent, ShieldCheck, AlertTriangle, FileSignature, Landmark, Download, Upload, FileDown, CloudOff, Cloud, Check, Camera, X, LogOut, History } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { useAuth } from '../context/AuthContext';
 import { clearAll } from '../lib/storage';
 import { formatDate } from '../lib/calc';
-import { PageHeader, Card, Button, Field, Input, Select, Badge } from '../components/ui';
+import { PageHeader, Card, Button, Field, Input, Select, Textarea, Badge } from '../components/ui';
 import IntegrationsCard from '../components/IntegrationsCard';
 
 export default function Parametres() {
@@ -36,11 +36,13 @@ export default function Parametres() {
       <PageHeader eyebrow="Configuration" title="Paramètres" description="Informations de la société, barème d'honoraires et accès collaborateurs." />
 
       <IntegrationsCard />
+      <ConsignesCard />
 
       <div className="grid lg:grid-cols-2 gap-5">
         <div className="space-y-5">
         <AccountCard />
         <BackupCard lastBackupAt={lastBackupAt} exportSnapshot={exportSnapshot} importSnapshot={importSnapshot} exportSynthese={exportSynthese} />
+        <HistoryCard />
         <Card>
           <div className="flex items-center gap-2 mb-4"><Building2 size={16} className="text-brass" /><h3 className="font-display text-[16px] text-ink">Société</h3></div>
           <form onSubmit={save} className="space-y-4">
@@ -224,6 +226,113 @@ function UserAdder({ onAdd, roles }) {
       </Select>
       <Button type="submit" variant="outline" size="sm"><Plus size={14} /> Ajouter</Button>
     </form>
+  );
+}
+
+// Historique des versions — deux filets indépendants :
+//   · côté serveur (table org_data_history, alimentée par un trigger SQL —
+//     voir supabase/migrations/) : chaque sauvegarde conserve la précédente ;
+//   · sur cet appareil (IndexedDB) : une copie par jour, et une avant toute
+//     synchronisation ou restauration qui retirerait des enregistrements.
+// Restaurer ne supprime jamais rien : le contenu de la version revient et
+// l'emporte ; ce qui a été créé depuis est conservé.
+// Consignes permanentes du Copilote : ce que la « secrétaire » doit toujours
+// respecter (ton, signature, habitudes). Le Copilote en ajoute aussi de
+// lui-même quand on lui dit « désormais… ».
+function ConsignesCard() {
+  const { societe, setSociete } = useApp();
+  const actuelles = societe.copiloteInstructions || '';
+  const [texte, setTexte] = useState(null); // null = pas de saisie en cours
+  const valeur = texte ?? actuelles;
+  const modifie = texte !== null && texte !== actuelles;
+  return (
+    <Card className="mb-5">
+      <div className="font-display text-[15px] text-ink mb-1">Consignes permanentes du Copilote</div>
+      <p className="text-[12px] text-ink-faint mb-3">Vos habitudes de travail, appliquées à chaque demande : ton des emails, formule de politesse, signature, ce qu'il doit toujours ou ne jamais faire. Vous pouvez aussi simplement lui dire « désormais, … » dans la conversation : il l'ajoute ici.</p>
+      <Textarea rows={5} value={valeur} onChange={(e) => setTexte(e.target.value.slice(0, 4000))} placeholder={"- Vouvoie toujours mes contacts\n- Signe « Bien cordialement, Alexan »\n- Après chaque rendez-vous, crée un rappel de relance à J+7"} />
+      <div className="mt-3 flex items-center gap-3">
+        <Button variant="brass" disabled={!modifie} onClick={() => { setSociete({ copiloteInstructions: valeur.trim() }); setTexte(null); }}>Enregistrer</Button>
+        {modifie && <button type="button" className="text-[12px] text-ink-faint hover:text-ink" onClick={() => setTexte(null)}>Annuler</button>}
+      </div>
+    </Card>
+  );
+}
+
+function HistoryCard() {
+  const { restoreSnapshot } = useApp();
+  const { orgId } = useAuth();
+  const [serveur, setServeur] = useState(null);
+  const [locales, setLocales] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState('');
+
+  async function charger() {
+    setBusy(true); setMsg('');
+    const [{ listOrgHistory }, { listLocalBackups }] = await Promise.all([import('../lib/orgSync'), import('../lib/localBackups')]);
+    const [s, l] = await Promise.all([listOrgHistory(orgId, 40), listLocalBackups(orgId)]);
+    setServeur(s); setLocales(l);
+    setBusy(false);
+  }
+
+  async function restaurer(source, v) {
+    const quand = new Date(v.created_at || v.at).toLocaleString('fr-FR');
+    if (!confirm(`Restaurer la version du ${quand} ? Son contenu revient et l'emporte ; rien de ce qui a été créé depuis n'est supprimé.`)) return;
+    setBusy(true);
+    let data = null;
+    if (source === 'serveur') { const { getOrgHistoryVersion } = await import('../lib/orgSync'); data = await getOrgHistoryVersion(v.id); }
+    else { const { getLocalBackup } = await import('../lib/localBackups'); data = await getLocalBackup(v.id); }
+    setMsg(data && restoreSnapshot(data) ? `Version du ${quand} restaurée.` : 'Impossible de lire cette version.');
+    setBusy(false);
+  }
+
+  const RAISONS = { quotidienne: 'copie du jour', 'avant-synchronisation': 'avant synchronisation', 'avant-restauration': 'avant restauration', 'changement-organisation': 'autre organisation' };
+
+  return (
+    <Card>
+      <div className="flex items-center gap-2 mb-2">
+        <History size={16} className="text-brass" />
+        <h3 className="font-display text-[16px] text-ink">Historique des versions</h3>
+        <Button size="sm" variant="outline" className="ml-auto" onClick={charger} disabled={busy || !orgId}>{busy ? 'Chargement…' : serveur ? 'Actualiser' : 'Afficher'}</Button>
+      </div>
+      <p className="text-[12px] text-ink-soft mb-3">Vos données sont conservées en plusieurs versions, sur le serveur et sur cet appareil. En cas d'erreur, revenez à un état antérieur en un clic — sans rien perdre de ce qui a été saisi depuis.</p>
+      {msg && <p className="text-[12px] text-teal mb-2">{msg}</p>}
+      {serveur && (
+        <div className="grid md:grid-cols-2 gap-4">
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-faint mb-1.5">Sur le serveur</div>
+            {serveur.length === 0 ? (
+              <p className="text-[12px] text-ink-faint">Pas encore activé — exécutez une fois la migration SQL fournie (voir INSTRUCTIONS.md).</p>
+            ) : (
+              <ul className="divide-y divide-line-soft max-h-64 overflow-y-auto">
+                {serveur.map((v) => (
+                  <li key={v.id} className="py-1.5 flex items-center justify-between gap-2 text-[12.5px]">
+                    <span className="text-ink">{new Date(v.created_at).toLocaleString('fr-FR')}</span>
+                    <span className="text-ink-faint tabular">{v.items_count ?? '—'}</span>
+                    <Button size="sm" variant="ghost" onClick={() => restaurer('serveur', v)} disabled={busy}>Restaurer</Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div>
+            <div className="text-[11px] uppercase tracking-wide text-ink-faint mb-1.5">Sur cet appareil</div>
+            {!locales?.length ? (
+              <p className="text-[12px] text-ink-faint">La première copie est prise automatiquement après une synchronisation.</p>
+            ) : (
+              <ul className="divide-y divide-line-soft max-h-64 overflow-y-auto">
+                {locales.map((v) => (
+                  <li key={v.id} className="py-1.5 flex items-center justify-between gap-2 text-[12.5px]">
+                    <span className="text-ink">{new Date(v.at).toLocaleString('fr-FR')}<span className="text-ink-faint"> · {RAISONS[v.reason] || v.reason}</span></span>
+                    <span className="text-ink-faint tabular">{v.count ?? '—'}</span>
+                    <Button size="sm" variant="ghost" onClick={() => restaurer('local', v)} disabled={busy}>Restaurer</Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
   );
 }
 

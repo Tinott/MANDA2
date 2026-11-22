@@ -5,6 +5,7 @@ import { useApp } from '../context/AppContext';
 import { aggregatePeriod, formatEUR, soldeTresorerieAt, formatDate } from '../lib/calc';
 import { PageHeader, StatCard, Card, Badge, statusTone, EmptyState, Button } from '../components/ui';
 import AlertsCard from '../components/AlertsCard';
+import RappelsCard from '../components/RappelsCard';
 
 function monthBounds(offset = 0) {
   const d = new Date();
@@ -15,9 +16,9 @@ function monthBounds(offset = 0) {
 }
 
 export default function Dashboard() {
-  const { societe, mandats, factures, notesFrais, registre, promesses } = useApp();
+  const { societe, mandats, factures, notesFrais, registre, promesses, contacts, taches } = useApp();
 
-  const hasData = factures.length || notesFrais.length || mandats.length;
+  const hasData = factures.length || notesFrais.length || mandats.length || promesses.length || contacts.length || taches.length;
   const thisMonth = monthBounds(0);
   const agg = aggregatePeriod(registre, thisMonth.start, thisMonth.end);
   const solde = soldeTresorerieAt(registre, thisMonth.end, societe.soldeTresorerieInitial);
@@ -72,7 +73,10 @@ export default function Dashboard() {
         />
       ) : (
         <>
-          <AlertsCard />
+          <div className="grid lg:grid-cols-2 gap-5 mb-6 items-start">
+            <AlertsCard />
+            <RappelsCard />
+          </div>
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <StatCard label="CA du mois (HT)" value={formatEUR(agg.totalProduitsHT)} sub={thisMonth.start.slice(0, 7)} />
             <StatCard label="Trésorerie estimée" value={formatEUR(solde)} tone={solde >= 0 ? 'good' : 'warn'} />

@@ -1,11 +1,13 @@
 
-import { createContext, useContext, useEffect, useMemo, useState, useRef } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import { loadState, saveState, uid } from '../lib/storage';
 import { buildRegistre } from '../lib/calc';
 import { ROLES } from '../lib/seed';
 import { trashEntryLabel } from '../lib/trashLabels';
-import { buildSnapshot } from '../lib/backup';
-import { pullOrgData, scheduleOrgPush } from '../lib/orgSync';
+import { pullOrgData, pushOrgData, peekOrgVersion } from '../lib/orgSync';
+import { createSyncEngine } from '../lib/syncEngine';
+import { mergeSnapshots, normalizeSnapshot, countItems, LISTES } from '../lib/syncMerge';
+import { saveLocalBackup } from '../lib/localBackups';
 
 const AppCtx = createContext(null);
 
@@ -29,6 +31,8 @@ const DEFAULT_SOCIETE = {
 
 const DEFAULT_CONTACT_CATEGORIES = ['Propriétaire', 'Investisseur', 'Notaire', 'Banque'];
 
+const now = () => new Date().toISOString();
+
 export function AppProvider({ children, orgId }) {
   const [societe, setSocieteState] = useState(() => loadState('societe', DEFAULT_SOCIETE));
   const [mandats, setMandats] = useState(() => loadState('mandats', []));
@@ -45,15 +49,21 @@ export function AppProvider({ children, orgId }) {
   const [courriers, setCourriers] = useState(() => loadState('courriers', []));
   const [trash, setTrash] = useState(() => loadState('trash', []));
   const [documents, setDocuments] = useState(() => loadState('documents', []));
+  // Rappels & tâches (agenda de travail tenu par l'utilisateur et le Copilote).
+  const [taches, setTaches] = useState(() => loadState('taches', []));
+  // Suppressions définitives (identifiant → date) et dates des réglages
+  // uniques : nécessaires à la fusion entre appareils (voir lib/syncMerge.js).
+  const [deleted, setDeleted] = useState(() => loadState('deleted', {}));
+  const [meta, setMeta] = useState(() => loadState('meta', {}));
   const [toast, setToast] = useState(null); // { trashIds: string[], label } — éphémère, non persisté
 
-  // Le compte cloud est désormais authentifié (voir AuthContext) : chaque
-  // organisation a une seule ligne de données, isolée par les règles côté
-  // serveur. localStorage reste une copie instantanée locale (pour un
-  // affichage immédiat et une résilience hors-ligne) ; org_data est la
-  // source de vérité partagée entre appareils.
+  // Chaque organisation a une seule ligne de données sur le serveur
+  // (org_data), partagée entre ses appareils et ses utilisateurs.
+  // localStorage en garde une copie locale (affichage immédiat, travail hors
+  // connexion). Les deux ne s'écrasent jamais : ils sont FUSIONNÉS
+  // enregistrement par enregistrement — voir lib/syncEngine.js.
   const [cloudStatus, setCloudStatus] = useState('idle'); // idle | syncing | synced | error
-  const hydratedOrg = useRef(null);
+  const [cloudReady, setCloudReady] = useState(false);    // le serveur a répondu au moins une fois
 
   useEffect(() => saveState('societe', societe), [societe]);
   useEffect(() => saveState('mandats', mandats), [mandats]);
@@ -70,54 +80,174 @@ export function AppProvider({ children, orgId }) {
   useEffect(() => saveState('courriers', courriers), [courriers]);
   useEffect(() => saveState('trash', trash), [trash]);
   useEffect(() => saveState('documents', documents), [documents]);
+  useEffect(() => saveState('taches', taches), [taches]);
+  useEffect(() => saveState('deleted', deleted), [deleted]);
+  useEffect(() => saveState('meta', meta), [meta]);
 
-  // Au premier chargement pour cette organisation, récupère ses données
-  // depuis le serveur et remplace l'état local par cette version — c'est
-  // elle qui fait foi, puisqu'elle peut avoir été modifiée depuis un autre
-  // appareil ou par un collègue.
+  // Instantané courant, toujours à jour, lisible hors du cycle de rendu
+  // (par le moteur de synchronisation).
+  const stateRef = useRef(null);
+  const currentSnapshot = () => ({
+    societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts,
+    prospects, courriers, trash, contactCategories, documents, taches, deleted, meta,
+  });
+  useLayoutEffect(() => { stateRef.current = currentSnapshot(); });
+
+  // Remplace tout l'état par un instantané (résultat d'une fusion).
+  const applying = useRef(false);
+  function applySnapshot(data) {
+    const d = normalizeSnapshot(data);
+    const complet = {
+      ...d,
+      societe: d.societe || DEFAULT_SOCIETE,
+      kmCumules: d.kmCumules || 0,
+      contactCategories: Array.isArray(d.contactCategories) ? d.contactCategories : DEFAULT_CONTACT_CATEGORIES,
+    };
+    applying.current = true;
+    stateRef.current = complet;
+    setSocieteState(complet.societe);
+    setMandats(complet.mandats);
+    setFactures(complet.factures);
+    setNotesFrais(complet.notesFrais);
+    setDossiers(complet.dossiers);
+    setUsers(complet.users);
+    setKmCumules(complet.kmCumules);
+    setPromesses(complet.promesses);
+    setContacts(complet.contacts);
+    setContactCategories(complet.contactCategories);
+    setProspects(complet.prospects);
+    setCourriers(complet.courriers);
+    setTrash(complet.trash);
+    setDocuments(complet.documents);
+    setTaches(complet.taches);
+    setDeleted(complet.deleted);
+    setMeta(complet.meta);
+    // Filet : si, pour une raison quelconque, le rendu ne suivait pas, le
+    // marqueur ne doit pas rester levé (il masquerait la saisie suivante).
+    setTimeout(() => { applying.current = false; }, 400);
+  }
+
+  // ---------------------------------------------------------------------
+  // Synchronisation avec le serveur.
+  // ---------------------------------------------------------------------
+  const engineRef = useRef(null);
   useEffect(() => {
-    if (!orgId || hydratedOrg.current === orgId) return;
-    hydratedOrg.current = orgId;
-    pullOrgData(orgId).then((data) => {
-      if (!data || Object.keys(data).length === 0) return;
-      setSocieteState(data.societe || DEFAULT_SOCIETE);
-      setMandats(data.mandats || []);
-      setFactures(data.factures || []);
-      setNotesFrais(data.notesFrais || []);
-      setDossiers(data.dossiers || []);
-      setUsers(data.users || []);
-      setKmCumules(data.kmCumules || 0);
-      setPromesses(data.promesses || []);
-      setContacts(data.contacts || []);
-      setContactCategories(data.contactCategories || DEFAULT_CONTACT_CATEGORIES);
-      setProspects(data.prospects || []);
-      setCourriers(data.courriers || []);
-      setTrash(data.trash || []);
-      setDocuments(data.documents || []);
+    if (!orgId) return undefined;
+
+    // La copie locale appartient-elle à une AUTRE organisation (autre compte
+    // utilisé sur ce navigateur) ? Elle est alors mise de côté — jamais
+    // mélangée ni envoyée dans l'organisation courante.
+    const cacheOrg = loadState('sync.org', null);
+    if (cacheOrg && cacheOrg !== orgId) {
+      const ancien = stateRef.current;
+      if (ancien && countItems(ancien) > 0) saveLocalBackup(cacheOrg, ancien, 'changement-organisation', countItems(ancien));
+      applySnapshot({});
+      saveState('sync.dirty', false);
+    }
+    saveState('sync.org', orgId);
+
+    const engine = createSyncEngine({
+      pull: () => pullOrgData(orgId),
+      peek: () => peekOrgVersion(orgId),
+      push: (data, version, forcer) => pushOrgData(orgId, { app: 'mandat', version: 1, ...data, exportedAt: now() }, version, forcer),
+      getLocal: () => stateRef.current,
+      applyMerged: applySnapshot,
+      onStatus: setCloudStatus,
+      isDirty: () => loadState('sync.dirty', false),
+      setDirty: (d) => saveState('sync.dirty', d),
+      isFirstRun: () => !loadState('sync.v2', false),
+      markRun: () => saveState('sync.v2', true),
+      backup: (snap, raison) => saveLocalBackup(orgId, snap, raison, countItems(snap)),
     });
+    engineRef.current = engine;
+
+    // Copie de sécurité locale quotidienne (IndexedDB), après une synchro réussie.
+    const copieQuotidienne = () => {
+      const snap = stateRef.current;
+      if (!snap || countItems(snap) === 0) return;
+      if (Date.now() - (loadState('sync.lastLocalBackup', 0) || 0) < 20 * 3600 * 1000) return;
+      saveState('sync.lastLocalBackup', Date.now());
+      saveLocalBackup(orgId, snap, 'quotidienne', countItems(snap));
+    };
+
+    let retry = null;
+    const demarrer = async (essai = 0) => {
+      const ok = await engine.sync();
+      if (engine.isHydrated()) setCloudReady(true);
+      if (ok) copieQuotidienne();
+      else if (!engine.isHydrated() && essai < 10) retry = setTimeout(() => demarrer(essai + 1), Math.min(30000, 3000 * (essai + 1)));
+    };
+    demarrer();
+
+    // Vérifications légères : toutes les 60 s et au retour sur l'onglet.
+    let dernier = 0;
+    const verifier = () => {
+      if (document.visibilityState !== 'visible' || Date.now() - dernier < 15000) return;
+      dernier = Date.now();
+      engine.sync({ leger: true }).then((ok) => { if (ok) copieQuotidienne(); });
+    };
+    const minuterie = setInterval(verifier, 60000);
+    window.addEventListener('focus', verifier);
+    window.addEventListener('online', verifier);
+    document.addEventListener('visibilitychange', verifier);
+
+    return () => {
+      engine.stop();
+      if (engineRef.current === engine) engineRef.current = null;
+      clearTimeout(retry);
+      clearInterval(minuterie);
+      window.removeEventListener('focus', verifier);
+      window.removeEventListener('online', verifier);
+      document.removeEventListener('visibilitychange', verifier);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [orgId]);
 
-  // Sauvegarde automatique en tâche de fond dès que quelque chose change,
-  // une fois les données de l'organisation chargées.
+  // Toute saisie locale est marquée « à envoyer » et déclenche une
+  // synchronisation (les changements venus du serveur, eux, ne le font pas).
+  const premierRendu = useRef(true);
   useEffect(() => {
-    if (!orgId || hydratedOrg.current !== orgId) return;
-    setCloudStatus('syncing');
-    scheduleOrgPush(orgId, () => buildSnapshot({
-      societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
-      promesses, contacts, prospects, courriers, trash, contactCategories, documents,
-    }));
-    const t = setTimeout(() => setCloudStatus('synced'), 2300);
-    return () => clearTimeout(t);
+    if (premierRendu.current) { premierRendu.current = false; return; }
+    if (applying.current) { applying.current = false; return; }
+    if (!orgId) return;
+    if (engineRef.current) engineRef.current.notifyLocalChange();
+    else saveState('sync.dirty', true);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [orgId, societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents]);
+  }, [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, promesses, contacts, prospects, courriers, trash, contactCategories, documents, taches, deleted, meta]);
+
+  // Restauration d'un instantané (sauvegarde exportée, version de
+  // l'historique, copie locale) : tout ce qu'il contient revient et
+  // l'emporte ; ce qui a été créé depuis est conservé. Rien ne disparaît.
+  function restoreSnapshot(data) {
+    if (!data || typeof data !== 'object') return false;
+    const t = now();
+    const r = normalizeSnapshot(data);
+    LISTES.forEach((k) => { r[k] = r[k].map((x) => (x && typeof x === 'object' ? { ...x, updatedAt: t } : x)); });
+    r.meta = { ...r.meta, societeAt: t, kmAt: t, categoriesAt: t };
+    const fusion = mergeSnapshots(r, stateRef.current || {});
+    const avant = stateRef.current;
+    if (avant && countItems(avant) > 0) saveLocalBackup(orgId, avant, 'avant-restauration', countItems(avant));
+    applySnapshot(fusion);
+    applying.current = false; // c'est une action de l'utilisateur : à envoyer
+    if (orgId) { if (engineRef.current) engineRef.current.notifyLocalChange(); else saveState('sync.dirty', true); }
+    return true;
+  }
 
   const registre = useMemo(() => buildRegistre(factures, notesFrais), [factures, notesFrais]);
+
+  // --- Fabriques : tout enregistrement porte sa date de dernière modification.
+  const creer = (prefixe, defauts, rec) => { const t = now(); return { id: uid(prefixe), createdAt: t, updatedAt: t, ...defauts, ...rec }; };
+  const modifier = (setter) => (id, patch) => setter((arr) => arr.map((x) => (x.id === id ? { ...x, ...patch, updatedAt: now() } : x)));
+  const marquerSupprimes = (ids) => {
+    const t = now();
+    setDeleted((d) => ({ ...d, ...Object.fromEntries(ids.filter(Boolean).map((id) => [id, t])) }));
+  };
 
   function softDelete(type, list, setList, id) {
     const item = list.find((x) => x.id === id);
     if (!item) return;
     const trashId = uid('trash');
-    setTrash((t) => [{ id: trashId, type, data: item, deletedAt: new Date().toISOString() }, ...t]);
+    setTrash((t) => [{ id: trashId, type, data: item, deletedAt: now() }, ...t]);
     setList((arr) => arr.filter((x) => x.id !== id));
     setToast({ trashIds: [trashId], label: trashEntryLabel(type, item) });
   }
@@ -126,8 +256,9 @@ export function AppProvider({ children, orgId }) {
     const idSet = new Set(ids);
     const items = list.filter((x) => idSet.has(x.id));
     if (!items.length) return;
-    const entries = items.map((item) => ({ id: uid('trash'), type, data: item, deletedAt: new Date().toISOString() }));
-    setTrash((t) => [...entries, ...t]);
+    const t = now();
+    const entries = items.map((item) => ({ id: uid('trash'), type, data: item, deletedAt: t }));
+    setTrash((tr) => [...entries, ...tr]);
     setList((arr) => arr.filter((x) => !idSet.has(x.id)));
     setToast({ trashIds: entries.map((e) => e.id), label: `${items.length} élément${items.length > 1 ? 's' : ''}` });
   }
@@ -135,88 +266,57 @@ export function AppProvider({ children, orgId }) {
   const listByType = {
     mandat: mandats, facture: factures, frais: notesFrais, promesse: promesses,
     contact: contacts, prospect: prospects, courrier: courriers, dossier: dossiers,
-    document: documents,
+    document: documents, tache: taches,
   };
   const setterByType = {
     mandat: setMandats, facture: setFactures, frais: setNotesFrais,
     promesse: setPromesses, contact: setContacts, prospect: setProspects,
-    courrier: setCourriers, dossier: setDossiers, document: setDocuments,
+    courrier: setCourriers, dossier: setDossiers, document: setDocuments, tache: setTaches,
   };
 
   const value = useMemo(
     () => ({
       societe,
-      setSociete: (patch) => setSocieteState((s) => ({ ...s, ...patch })),
-      completeOnboarding: (patch) => setSocieteState((s) => ({ ...s, ...patch, onboarded: true })),
+      setSociete: (patch) => { setSocieteState((s) => ({ ...s, ...patch })); setMeta((m) => ({ ...m, societeAt: now() })); },
+      completeOnboarding: (patch) => { setSocieteState((s) => ({ ...s, ...patch, onboarded: true })); setMeta((m) => ({ ...m, societeAt: now() })); },
 
       mandats,
-      addMandat: (m) => {
-        const rec = { id: uid('mandat'), createdAt: new Date().toISOString(), statut: 'En cours', ...m };
-        setMandats((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updateMandat: (id, patch) => setMandats((arr) => arr.map((m) => (m.id === id ? { ...m, ...patch } : m))),
+      addMandat: (m) => { const rec = creer('mandat', { statut: 'En cours' }, m); setMandats((arr) => [rec, ...arr]); return rec; },
+      updateMandat: modifier(setMandats),
       removeMandat: (id) => softDelete('mandat', mandats, setMandats, id),
 
       factures,
-      addFacture: (f) => {
-        const rec = { id: uid('fact'), createdAt: new Date().toISOString(), ...f };
-        setFactures((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updateFacture: (id, patch) => setFactures((arr) => arr.map((f) => (f.id === id ? { ...f, ...patch } : f))),
+      addFacture: (f) => { const rec = creer('fact', {}, f); setFactures((arr) => [rec, ...arr]); return rec; },
+      updateFacture: modifier(setFactures),
       removeFacture: (id) => softDelete('facture', factures, setFactures, id),
 
       notesFrais,
-      addNoteFrais: (n) => {
-        const rec = { id: uid('frais'), createdAt: new Date().toISOString(), ...n };
-        setNotesFrais((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updateNoteFrais: (id, patch) => setNotesFrais((arr) => arr.map((n) => (n.id === id ? { ...n, ...patch } : n))),
+      addNoteFrais: (n) => { const rec = creer('frais', {}, n); setNotesFrais((arr) => [rec, ...arr]); return rec; },
+      updateNoteFrais: modifier(setNotesFrais),
       removeNoteFrais: (id) => softDelete('frais', notesFrais, setNotesFrais, id),
 
       dossiers,
-      addDossier: (d) => {
-        const rec = { id: uid('dossier'), createdAt: new Date().toISOString(), fichiers: [], partages: [], ...d };
-        setDossiers((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updateDossier: (id, patch) => setDossiers((arr) => arr.map((d) => (d.id === id ? { ...d, ...patch } : d))),
+      addDossier: (d) => { const rec = creer('dossier', { fichiers: [], partages: [] }, d); setDossiers((arr) => [rec, ...arr]); return rec; },
+      updateDossier: modifier(setDossiers),
       removeDossier: (id) => softDelete('dossier', dossiers, setDossiers, id),
 
       // Documents juridiques — mandats, avenants, offre d'achat, générés
-      // depuis les modèles dynamiques (voir lib/documentEngine.js).
+      // depuis les modèles dynamiques (voir lib/documentEngine.js) — et
+      // bibliothèque du Copilote (type « bibliotheque »).
       documents,
-      addDocument: (d) => {
-        const rec = { id: uid('document'), createdAt: new Date().toISOString(), statut: 'Brouillon', ...d };
-        setDocuments((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updateDocument: (id, patch) => setDocuments((arr) => arr.map((d) => (d.id === id ? { ...d, ...patch, updatedAt: new Date().toISOString() } : d))),
+      addDocument: (d) => { const rec = creer('document', { statut: 'Brouillon' }, d); setDocuments((arr) => [rec, ...arr]); return rec; },
+      updateDocument: modifier(setDocuments),
       removeDocument: (id) => softDelete('document', documents, setDocuments, id),
 
       promesses,
-      addPromesse: (p) => {
-        const rec = { id: uid('promesse'), createdAt: new Date().toISOString(), statut: 'En cours', ...p };
-        setPromesses((arr) => [rec, ...arr]);
-        return rec;
-      },
-      updatePromesse: (id, patch) => setPromesses((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+      addPromesse: (p) => { const rec = creer('promesse', { statut: 'En cours' }, p); setPromesses((arr) => [rec, ...arr]); return rec; },
+      updatePromesse: modifier(setPromesses),
       removePromesse: (id) => softDelete('promesse', promesses, setPromesses, id),
 
       contacts,
-      addContact: (c) => {
-        const rec = { id: uid('contact'), createdAt: new Date().toISOString(), ...c };
-        setContacts((arr) => [rec, ...arr]);
-        return rec;
-      },
-      addContactsBulk: (list) => {
-        const recs = list.map((c) => ({ id: uid('contact'), createdAt: new Date().toISOString(), ...c }));
-        setContacts((arr) => [...recs, ...arr]);
-        return recs;
-      },
-      updateContact: (id, patch) => setContacts((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
+      addContact: (c) => { const rec = creer('contact', {}, c); setContacts((arr) => [rec, ...arr]); return rec; },
+      addContactsBulk: (list) => { const recs = list.map((c) => creer('contact', {}, c)); setContacts((arr) => [...recs, ...arr]); return recs; },
+      updateContact: modifier(setContacts),
       removeContact: (id) => softDelete('contact', contacts, setContacts, id),
 
       // Catégories de contacts — onglets renommables librement par le
@@ -227,53 +327,48 @@ export function AppProvider({ children, orgId }) {
         const trimmed = name.trim();
         if (!trimmed) return;
         setContactCategories((arr) => (arr.includes(trimmed) ? arr : [...arr, trimmed]));
+        setMeta((m) => ({ ...m, categoriesAt: now() }));
       },
       renameContactCategory: (oldName, newName) => {
         const trimmed = newName.trim();
         if (!trimmed || trimmed === oldName) return;
+        const t = now();
         setContactCategories((arr) => arr.map((c) => (c === oldName ? trimmed : c)));
-        setContacts((arr) => arr.map((c) => (c.categorie === oldName ? { ...c, categorie: trimmed } : c)));
+        setContacts((arr) => arr.map((c) => (c.categorie === oldName ? { ...c, categorie: trimmed, updatedAt: t } : c)));
+        setMeta((m) => ({ ...m, categoriesAt: t }));
       },
       removeContactCategory: (name) => {
+        const t = now();
         setContactCategories((arr) => arr.filter((c) => c !== name));
-        setContacts((arr) => arr.map((c) => (c.categorie === name ? { ...c, categorie: '' } : c)));
+        setContacts((arr) => arr.map((c) => (c.categorie === name ? { ...c, categorie: '', updatedAt: t } : c)));
+        setMeta((m) => ({ ...m, categoriesAt: t }));
       },
 
       prospects,
-      addProspect: (p) => {
-        const rec = { id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p };
-        setProspects((arr) => [rec, ...arr]);
-        return rec;
-      },
-      addProspectsBulk: (list) => {
-        const recs = list.map((p) => ({ id: uid('prospect'), createdAt: new Date().toISOString(), statut: 'À contacter', ...p }));
-        setProspects((arr) => [...recs, ...arr]);
-        return recs;
-      },
-      updateProspect: (id, patch) => setProspects((arr) => arr.map((p) => (p.id === id ? { ...p, ...patch } : p))),
+      addProspect: (p) => { const rec = creer('prospect', { statut: 'À contacter' }, p); setProspects((arr) => [rec, ...arr]); return rec; },
+      addProspectsBulk: (list) => { const recs = list.map((p) => creer('prospect', { statut: 'À contacter' }, p)); setProspects((arr) => [...recs, ...arr]); return recs; },
+      updateProspect: modifier(setProspects),
       removeProspect: (id) => softDelete('prospect', prospects, setProspects, id),
 
       courriers,
-      addCourrier: (c) => {
-        const rec = { id: uid('courrier'), createdAt: new Date().toISOString(), statut: 'Envoyé', ...c };
-        setCourriers((arr) => [rec, ...arr]);
-        return rec;
-      },
-      addCourriersBulk: (list) => {
-        const recs = list.map((c) => ({ id: uid('courrier'), createdAt: new Date().toISOString(), statut: 'Envoyé', ...c }));
-        setCourriers((arr) => [...recs, ...arr]);
-        return recs;
-      },
-      updateCourrier: (id, patch) => setCourriers((arr) => arr.map((c) => (c.id === id ? { ...c, ...patch } : c))),
+      addCourrier: (c) => { const rec = creer('courrier', { statut: 'Envoyé' }, c); setCourriers((arr) => [rec, ...arr]); return rec; },
+      addCourriersBulk: (list) => { const recs = list.map((c) => creer('courrier', { statut: 'Envoyé' }, c)); setCourriers((arr) => [...recs, ...arr]); return recs; },
+      updateCourrier: modifier(setCourriers),
       removeCourrier: (id) => softDelete('courrier', courriers, setCourriers, id),
 
+      // Rappels & tâches.
+      taches,
+      addTache: (t) => { const rec = creer('tache', { fait: false }, t); setTaches((arr) => [rec, ...arr]); return rec; },
+      updateTache: modifier(setTaches),
+      removeTache: (id) => softDelete('tache', taches, setTaches, id),
+
       users,
-      addUser: (u) => setUsers((arr) => [...arr, { id: uid('user'), role: 'agent', ...u }]),
-      removeUser: (id) => setUsers((arr) => arr.filter((u) => u.id !== id)),
+      addUser: (u) => setUsers((arr) => [...arr, creer('user', { role: 'agent' }, u)]),
+      removeUser: (id) => { setUsers((arr) => arr.filter((u) => u.id !== id)); marquerSupprimes([id]); },
       roles: ROLES,
 
       kmCumules,
-      addKm: (n) => setKmCumules((v) => v + n),
+      addKm: (n) => { setKmCumules((v) => v + n); setMeta((m) => ({ ...m, kmAt: now() })); },
 
       registre,
 
@@ -284,60 +379,56 @@ export function AppProvider({ children, orgId }) {
         const entry = trash.find((t) => t.id === trashId);
         if (!entry) return;
         const setter = setterByType[entry.type];
-        if (setter) setter((arr) => [entry.data, ...arr]);
+        const rec = { ...entry.data, updatedAt: now() };
+        if (setter) setter((arr) => [rec, ...arr.filter((x) => x.id !== rec.id)]);
         setTrash((t) => t.filter((x) => x.id !== trashId));
         setToast((cur) => (cur?.trashIds?.includes(trashId) ? null : cur));
       },
       restoreMany: (trashIds) => {
         const idSet = new Set(trashIds);
         const entries = trash.filter((t) => idSet.has(t.id));
+        const t = now();
         const byType = {};
-        entries.forEach((e) => { (byType[e.type] ||= []).push(e.data); });
+        entries.forEach((e) => { (byType[e.type] ||= []).push({ ...e.data, updatedAt: t }); });
         Object.entries(byType).forEach(([type, items]) => {
           const setter = setterByType[type];
-          if (setter) setter((arr) => [...items, ...arr]);
+          const ids = new Set(items.map((x) => x.id));
+          if (setter) setter((arr) => [...items, ...arr.filter((x) => !ids.has(x.id))]);
         });
-        setTrash((t) => t.filter((x) => !idSet.has(x.id)));
+        setTrash((tr) => tr.filter((x) => !idSet.has(x.id)));
         setToast((cur) => (cur?.trashIds?.some((id) => idSet.has(id)) ? null : cur));
       },
-      permanentlyDelete: (trashId) => setTrash((t) => t.filter((x) => x.id !== trashId)),
-      emptyTrash: () => setTrash([]),
+      permanentlyDelete: (trashId) => {
+        const entry = trash.find((t) => t.id === trashId);
+        if (entry) marquerSupprimes([entry.id, entry.data?.id]);
+        setTrash((t) => t.filter((x) => x.id !== trashId));
+      },
+      emptyTrash: () => {
+        marquerSupprimes(trash.flatMap((e) => [e.id, e.data?.id]));
+        setTrash([]);
+      },
 
       toast,
       dismissToast: () => setToast(null),
 
-      // Statut de synchronisation cloud — la donnée elle-même vit sur le
-      // serveur (org_data), rattachée à l'organisation authentifiée ; voir
-      // AuthContext pour la connexion et l'appartenance à l'organisation.
+      // Statut de synchronisation — la donnée vit sur le serveur (org_data),
+      // rattachée à l'organisation authentifiée ; voir AuthContext.
       cloudStatus,
+      cloudReady,
+      syncNow: () => engineRef.current?.sync({ leger: true }),
+      restoreSnapshot,
 
       lastBackupAt,
       exportSnapshot: async () => {
         const { downloadSnapshot } = await import('../lib/backup');
-        const at = downloadSnapshot({
-          societe, mandats, factures, notesFrais, dossiers, users, kmCumules,
-          promesses, contacts, prospects, courriers, trash, contactCategories, documents,
-        });
+        const at = downloadSnapshot(currentSnapshot());
         setLastBackupAt(at);
         return at;
       },
       importSnapshot: async (file) => {
         const { readSnapshotFile } = await import('../lib/backup');
         const data = await readSnapshotFile(file);
-        setSocieteState(data.societe || DEFAULT_SOCIETE);
-        setMandats(data.mandats || []);
-        setFactures(data.factures || []);
-        setNotesFrais(data.notesFrais || []);
-        setDossiers(data.dossiers || []);
-        setUsers(data.users || []);
-        setKmCumules(data.kmCumules || 0);
-        setPromesses(data.promesses || []);
-        setContacts(data.contacts || []);
-        setContactCategories(data.contactCategories || DEFAULT_CONTACT_CATEGORIES);
-        setProspects(data.prospects || []);
-        setCourriers(data.courriers || []);
-        setTrash(data.trash || []);
-        setDocuments(data.documents || []);
+        restoreSnapshot(data);
         return data;
       },
       exportSynthese: async () => {
@@ -345,7 +436,8 @@ export function AppProvider({ children, orgId }) {
         downloadSynthesePdf({ societe, mandats, factures, notesFrais, registre });
       },
     }),
-    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, contactCategories, prospects, courriers, trash, toast, documents, cloudStatus]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [societe, mandats, factures, notesFrais, dossiers, users, kmCumules, registre, lastBackupAt, promesses, contacts, contactCategories, prospects, courriers, trash, toast, documents, taches, deleted, meta, cloudStatus, cloudReady]
   );
 
   return <AppCtx.Provider value={value}>{children}</AppCtx.Provider>;

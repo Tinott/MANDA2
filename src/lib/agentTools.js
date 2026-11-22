@@ -1,8 +1,9 @@
 // Outils du Copilote — ce que l'IA peut FAIRE dans l'application, pas
 // seulement dire. Chaque outil est déclaré (schéma lu par le modèle) et
 // exécuté ici, dans le navigateur, sur les données de l'utilisateur
-// connecté. Aucun outil ne supprime quoi que ce soit ; les envois d'emails
-// se font toujours via le composer, après validation humaine.
+// connecté. Rien n'est jamais supprimé définitivement par un outil (la
+// suppression envoie à la corbeille, restaurable) ; les envois d'emails se
+// font toujours via le composer, après validation humaine.
 
 import { calcHonoraires, nextInvoiceNumber, clientNumero, tvaMontant, formatEUR } from './calc';
 import { uid } from './storage';
@@ -20,7 +21,7 @@ export const TOOLS = [
     name: 'lister_donnees',
     description: "Liste les enregistrements d'un module de l'application (complets, au-delà de l'instantané), avec un filtre texte optionnel. À utiliser avant de modifier un élément dont tu n'as pas l'identifiant.",
     input_schema: obj({
-      type: { type: 'string', enum: ['mandats', 'promesses', 'factures', 'notesFrais', 'contacts', 'prospects', 'courriers', 'documents', 'dossiers'], description: 'Module à lister' },
+      type: { type: 'string', enum: ['mandats', 'promesses', 'factures', 'notesFrais', 'contacts', 'prospects', 'courriers', 'documents', 'dossiers', 'taches'], description: 'Module à lister (taches = rappels)' },
       recherche: str('Texte à chercher dans les enregistrements (optionnel)'),
       limite: num('Nombre maximum (défaut 40)'),
     }, ['type']),
@@ -186,6 +187,39 @@ export const TOOLS = [
     input_schema: obj({ nom: str('Titre'), resume: str('Synthèse (max ~1500 caractères)'), tags: arr({ type: 'string' }) }, ['nom', 'resume']),
   },
   {
+    name: 'creer_rappel',
+    description: "Crée un rappel / une tâche datée dans l'agenda de l'application (à rappeler, à envoyer, rendez-vous, échéance). À utiliser dès que l'utilisateur dit « rappelle-moi », « pense à », « note pour lundi », ou quand un échange implique une suite à donner. Le rappel apparaît sur le tableau de bord et dans le briefing, et peut être ajouté au calendrier.",
+    input_schema: obj({
+      titre: str('Ce qu\'il faut faire, court et à l\'impératif'), date: str('Échéance YYYY-MM-DD'), heure: str('HH:MM (optionnel, pour un rendez-vous)'),
+      note: str('Détail utile (optionnel)'), contact: str('Identifiant ou nom du contact concerné (optionnel)'),
+    }, ['titre', 'date']),
+  },
+  {
+    name: 'modifier_rappel',
+    description: 'Modifie un rappel : le marquer fait, le reporter, changer son titre.',
+    input_schema: obj({ id: str('Identifiant du rappel'), modifications: obj({ fait: { type: 'boolean' }, date: str('YYYY-MM-DD'), heure: str('HH:MM'), titre: str(''), note: str('') }) }, ['id', 'modifications']),
+  },
+  {
+    name: 'modifier_facture',
+    description: "Met à jour une facture : statut (Envoyée, Payée, En retard…), date de paiement, notaire, référence. Ne change jamais le numéro ni les montants d'une facture déjà émise.",
+    input_schema: obj({ id: str('Identifiant ou numéro de la facture'), modifications: obj({ statut: { type: 'string', enum: ['Brouillon', 'Émise', 'Envoyée', 'Payée', 'En retard'] }, datePaiement: str('YYYY-MM-DD'), notaire: str(''), mandatRef: str('') }) }, ['id', 'modifications']),
+  },
+  {
+    name: 'creer_courrier',
+    description: 'Trace un courrier ou email de prospection envoyé (onglet Courriers du Suivi commercial), avec la date de relance prévue.',
+    input_schema: obj({ societe: str('Société destinataire'), nomContact: str('Interlocuteur'), objet: str('Objet'), date: str('Date d\'envoi YYYY-MM-DD'), dateRelancePrevue: str('YYYY-MM-DD'), statut: { type: 'string', enum: ['Envoyé', 'Relancé', 'Répondu'] }, notes: str('') }, ['objet']),
+  },
+  {
+    name: 'supprimer_element',
+    description: "Met un élément à la corbeille (restaurable à tout moment depuis la page Corbeille). Uniquement sur demande explicite de l'utilisateur. Les factures émises ne peuvent pas être supprimées (seuls les brouillons).",
+    input_schema: obj({ type: { type: 'string', enum: ['contact', 'mandat', 'promesse', 'prospect', 'courrier', 'frais', 'document', 'tache', 'facture'] }, id: str('Identifiant') }, ['type', 'id']),
+  },
+  {
+    name: 'memoriser_consigne',
+    description: "Enregistre une consigne permanente de l'utilisateur sur ta façon de travailler (ton des emails, formule de politesse, signature, habitudes, préférences). Elle sera appliquée dans toutes les conversations futures. À utiliser quand l'utilisateur dit « toujours », « à partir de maintenant », « désormais », « ne fais plus jamais ».",
+    input_schema: obj({ consigne: str('La consigne, formulée clairement en une phrase') }, ['consigne']),
+  },
+  {
     name: 'ouvrir_page',
     description: "Ouvre une page de l'application pour l'utilisateur.",
     input_schema: obj({ route: { type: 'string', enum: ['/', '/mandats', '/contacts', '/suivi', '/documents', '/facturation', '/frais', '/comptabilite', '/tresorerie', '/im', '/mail', '/promesses', '/rapports', '/parametres'] } }, ['route']),
@@ -195,7 +229,12 @@ export const TOOLS = [
 // ---------------------------------------------------------------------------
 // Exécution — `app` est la valeur de useApp(), `navigate` celle du routeur.
 // ---------------------------------------------------------------------------
-export function createToolExecutor({ app, navigate, societe }) {
+// `getApp` (recommandé) renvoie l'état À JOUR à chaque appel : pendant un
+// enchaînement d'actions, chaque outil voit ce que le précédent vient de
+// créer ou de modifier.
+export function createToolExecutor({ app: appFixe, getApp, navigate, societe: societeFixe }) {
+  const app = getApp ? new Proxy({}, { get: (_, k) => getApp()[k] }) : appFixe;
+  const societe = getApp ? new Proxy({}, { get: (_, k) => (getApp().societe || {})[k] }) : societeFixe;
   const today = () => new Date().toISOString().slice(0, 10);
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
@@ -213,6 +252,12 @@ export function createToolExecutor({ app, navigate, societe }) {
   const compact = (c) => {
     const n = normalizeContact(c);
     return { id: n.id, label: contactLabel(n), nom: [n.prenom, n.nom].filter(Boolean).join(' '), fonction: n.fonction, categorie: n.categorie, email: n.email, telephone: n.telephone, vehicule: n.vehicule, classesActifs: n.classesActifs, zones: n.zones, ticketMin: n.ticketMin, ticketMax: n.ticketMax, rendementCible: n.rendementCible, statutRelation: n.statutRelation, prochaineRelance: n.prochaineRelance, notes: (n.notes || '').slice(0, 300), dernierEchange: n.interactions[0] ? `${n.interactions[0].date} ${n.interactions[0].type}: ${n.interactions[0].note}` : undefined };
+  };
+  // Le modèle parle de « dateSignature » / « dateReiteration » ; la fiche
+  // promesse de l'application utilise ses propres noms de champs.
+  const champsPromesse = (o) => {
+    const { dateSignature, dateReiteration, ...reste } = o || {};
+    return { ...reste, ...(dateSignature ? { dateSignaturePromesse: dateSignature } : {}), ...(dateReiteration ? { dateReiterationPrevue: dateReiteration } : {}) };
   };
   const clean = (o) => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v !== undefined && v !== null && v !== ''));
 
@@ -292,13 +337,13 @@ export function createToolExecutor({ app, navigate, societe }) {
         return { resume: `Mandat modifié : ${m.adresse}` };
       }
       case 'creer_promesse': {
-        const rec = app.addPromesse(clean(input));
+        const rec = app.addPromesse(clean(champsPromesse(input)));
         return { id: rec.id, resume: `Promesse enregistrée : ${rec.bienAdresse}` };
       }
       case 'modifier_promesse': {
         const p = app.promesses.find((x) => x.id === input.id);
         if (!p) throw new Error('Promesse introuvable.');
-        app.updatePromesse(p.id, clean(input.modifications));
+        app.updatePromesse(p.id, clean(champsPromesse(input.modifications)));
         return { resume: `Promesse mise à jour : ${p.bienAdresse}` };
       }
       case 'calculer_honoraires': {
@@ -330,6 +375,54 @@ export function createToolExecutor({ app, navigate, societe }) {
         const cat = DEPENSE_CATEGORIES.find((c) => c.id === input.categorie) || DEPENSE_CATEGORIES.find((c) => c.id === 'autre');
         const rec = app.addNoteFrais({ commercant: input.commercant || '', date: input.date || today(), categorie: cat.id, categorieLabel: cat.label, compte: cat.compte, montantTTC: ttc, montantTVA: tva, montantHT: ttc - tva, tauxTva: taux });
         return { id: rec.id, resume: `Note de frais : ${formatEUR(ttc)} — ${cat.label}${input.commercant ? ` (${input.commercant})` : ''}` };
+      }
+      case 'creer_rappel': {
+        let c = null;
+        if (input.contact) { try { c = resolveContact(input.contact); } catch { c = null; } }
+        const rec = app.addTache(clean({ titre: input.titre, date: input.date || today(), heure: input.heure, note: input.note, contactId: c?.id, contactNom: c ? contactLabel(c) : (input.contact || undefined), source: 'copilote' }));
+        return { id: rec.id, resume: `Rappel créé : ${rec.titre} — ${rec.date}${rec.heure ? ` à ${rec.heure}` : ''}` };
+      }
+      case 'modifier_rappel': {
+        const t = (app.taches || []).find((x) => x.id === input.id);
+        if (!t) throw new Error('Rappel introuvable.');
+        const m = { ...(input.modifications || {}) };
+        if (m.fait === true) m.faitLe = today();
+        if (m.fait === false) m.faitLe = '';
+        app.updateTache(t.id, m);
+        return { resume: m.fait ? `Rappel terminé : ${t.titre}` : `Rappel mis à jour : ${m.titre || t.titre}` };
+      }
+      case 'modifier_facture': {
+        const f = app.factures.find((x) => x.id === input.id || x.numero === input.id);
+        if (!f) throw new Error('Facture introuvable.');
+        const m = clean(input.modifications);
+        if (m.statut === 'Payée' && !m.datePaiement && !f.datePaiement) m.datePaiement = today();
+        app.updateFacture(f.id, m);
+        return { resume: `Facture ${f.numero} mise à jour${m.statut ? ` : ${m.statut}` : ''}` };
+      }
+      case 'creer_courrier': {
+        const rec = app.addCourrier(clean({ ...input, date: input.date || today() }));
+        return { id: rec.id, resume: `Courrier tracé : ${rec.objet}${rec.societe ? ` (${rec.societe})` : ''}` };
+      }
+      case 'supprimer_element': {
+        const MAP = {
+          contact: ['contacts', 'removeContact'], mandat: ['mandats', 'removeMandat'], promesse: ['promesses', 'removePromesse'], prospect: ['prospects', 'removeProspect'],
+          courrier: ['courriers', 'removeCourrier'], frais: ['notesFrais', 'removeNoteFrais'], document: ['documents', 'removeDocument'], tache: ['taches', 'removeTache'], facture: ['factures', 'removeFacture'],
+        };
+        const def = MAP[input.type];
+        if (!def) throw new Error('Type inconnu.');
+        const item = (app[def[0]] || []).find((x) => x.id === input.id);
+        if (!item) throw new Error('Élément introuvable.');
+        if (input.type === 'facture' && item.statut !== 'Brouillon') throw new Error('Une facture émise ne se supprime pas (numérotation légale). Seuls les brouillons peuvent être supprimés.');
+        app[def[1]](item.id);
+        return { resume: `Mis à la corbeille (restaurable) : ${item.titre || item.adresse || item.bienAdresse || item.prospect || item.objet || item.nom || item.societe || item.numero || input.type}` };
+      }
+      case 'memoriser_consigne': {
+        const texte = String(input.consigne || '').trim();
+        if (!texte) throw new Error('Consigne vide.');
+        const actuelles = String(societe.copiloteInstructions || '').trim();
+        if (actuelles.split('\n').some((l) => l.replace(/^[-•]\s*/, '').trim() === texte)) return { resume: 'Consigne déjà enregistrée.' };
+        app.setSociete({ copiloteInstructions: `${actuelles ? `${actuelles}\n` : ''}- ${texte}`.slice(0, 4000) });
+        return { resume: `Consigne mémorisée : ${texte}` };
       }
       case 'preparer_email': {
         navigate('/mail', { state: { compose: { to: input.to, subject: input.subject, body: input.body } } });

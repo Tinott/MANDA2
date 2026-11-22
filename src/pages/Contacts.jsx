@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import {
   Plus, Users, Search, Pencil, Trash2, Mail, Phone, MapPin, UploadCloud, Loader2, AlertCircle,
   CheckCircle2, ChevronDown, ChevronRight, X, Link2, Globe, Briefcase, Target, History, Sparkles,
-  CalendarClock, Building2, ArrowRight, MessageSquarePlus,
+  CalendarClock, Building2, ArrowRight, MessageSquarePlus, LayoutGrid, List, StickyNote,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import { formatEUR, formatDate } from '../lib/calc';
@@ -57,6 +57,8 @@ export default function Contacts() {
   const [ui, setUi] = usePersistedState('contacts.ui', { query: '', categorie: '', classe: '', statut: '', selectedId: null });
   const [editing, setEditing] = useState(null); // null fermé | 'new' | objet
   const [importOpen, setImportOpen] = useState(false);
+  const [noteFor, setNoteFor] = useState(null); // contact pour lequel on note un échange, sans ouvrir la fiche
+  const vue = ui.vue === 'liste' ? 'liste' : 'cartes';
   const setU = (patch) => setUi((u) => ({ ...u, ...patch }));
 
   const tags = useMemo(() => {
@@ -74,6 +76,7 @@ export default function Contacts() {
       const haystack = normalize([
         c.societe, c.nom, c.prenom, c.fonction, c.email, c.telephone, c.adresse, c.notes, c.categorie, c.vehicule,
         c.classesActifs.join(' '), c.zones.join(' '), c.patrimoine, c.source, c.strategie,
+        c.interactions.map((i) => i.note).join(' '),
       ].join(' '));
       return haystack.includes(q);
     });
@@ -134,11 +137,54 @@ export default function Contacts() {
             <div className="text-[12px] text-ink-faint">
               {filtered.length} contact{filtered.length > 1 ? 's' : ''}{filtered.length !== contacts.length ? ` sur ${contacts.length}` : ''}
             </div>
-            <BulkDeleteButton type="contact" items={filtered} label="contact" size="sm" />
+            <div className="flex items-center gap-2">
+              <div className="flex rounded-lg border border-line overflow-hidden" role="group" aria-label="Affichage">
+                {[['cartes', 'Cartes', LayoutGrid], ['liste', 'Liste', List]].map(([id, label, Icon]) => (
+                  <button key={id} type="button" onClick={() => setU({ vue: id })} aria-pressed={vue === id}
+                    className={`flex items-center gap-1.5 px-2.5 py-1.5 text-[12px] ${vue === id ? 'bg-ink text-white' : 'bg-surface text-ink-soft hover:bg-paper-raised'}`}>
+                    <Icon size={13} /> {label}
+                  </button>
+                ))}
+              </div>
+              <BulkDeleteButton type="contact" items={filtered} label="contact" size="sm" />
+            </div>
           </div>
 
           {filtered.length === 0 ? (
             <EmptyState icon={Search} title="Aucun résultat" description="Essayez un autre terme, ou changez de filtre." />
+          ) : vue === 'liste' ? (
+            <div className="space-y-2">
+              {filtered.map((c) => {
+                const rel = relanceTone(c.prochaineRelance);
+                return (
+                  <Card key={c.id} padded={false} className="cursor-pointer hover:border-brass/50 transition-colors p-4" onClick={() => setU({ selectedId: c.id })}>
+                    <div className="grid lg:grid-cols-[minmax(0,260px)_minmax(0,1fr)_auto] gap-x-5 gap-y-2.5">
+                      <div className="min-w-0">
+                        <div className="font-display text-[15px] text-ink leading-snug">{contactLabel(c)}</div>
+                        {(c.societe && (c.nom || c.prenom)) || c.fonction ? (
+                          <div className="text-[12px] text-ink-faint">{c.societe ? [c.prenom, c.nom].filter(Boolean).join(' ') : ''}{c.fonction ? `${c.societe && (c.nom || c.prenom) ? ' · ' : ''}${c.fonction}` : ''}</div>
+                        ) : null}
+                        <div className="mt-1.5 space-y-0.5 text-[12.5px]" onClick={(e) => e.stopPropagation()}>
+                          {c.email && <a href={`mailto:${c.email.split(' / ')[0]}`} className="flex items-center gap-1.5 text-ink-soft hover:text-brass break-all"><Mail size={12} className="shrink-0" /> {c.email}</a>}
+                          {c.telephone && <a href={`tel:${c.telephone.split(' / ')[0].replace(/[^\d+]/g, '')}`} className="flex items-center gap-1.5 text-ink-soft hover:text-brass"><Phone size={12} className="shrink-0" /> {c.telephone}</a>}
+                        </div>
+                        <div className="mt-2 flex flex-wrap gap-1">
+                          {c.categorie && <Badge tone={toneFor(c.categorie)}>{c.categorie}</Badge>}
+                          {rel && rel.tone !== 'default' && <Badge tone={rel.tone}>{rel.label}</Badge>}
+                        </div>
+                        <Criteres c={c} className="mt-2" />
+                      </div>
+                      <NotesApercu c={c} complet />
+                      <div className="flex lg:flex-col items-center gap-0.5 justify-end lg:justify-start" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => setNoteFor(c)} className="p-1.5 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Noter un échange"><MessageSquarePlus size={14} /></button>
+                        <button onClick={() => setEditing(c)} className="p-1.5 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Modifier"><Pencil size={14} /></button>
+                        <button onClick={() => removeContact(c.id)} className="p-1.5 rounded-lg text-ink-faint hover:text-rust hover:bg-rust-soft" title="Supprimer"><Trash2 size={14} /></button>
+                      </div>
+                    </div>
+                  </Card>
+                );
+              })}
+            </div>
           ) : (
             <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
               {filtered.map((c) => {
@@ -161,23 +207,19 @@ export default function Contacts() {
                       </div>
                     </div>
 
-                    {(c.classesActifs.length > 0 || c.zones.length > 0 || ticketLabel(c)) && (
-                      <div className="mt-2.5 flex flex-wrap gap-1">
-                        {c.classesActifs.map((k) => <span key={k} className="text-[10.5px] px-1.5 py-0.5 rounded bg-brass-soft text-ink">{k}</span>)}
-                        {c.zones.slice(0, 3).map((z) => <span key={z} className="text-[10.5px] px-1.5 py-0.5 rounded bg-paper-raised border border-line text-ink-soft">{z}</span>)}
-                        {ticketLabel(c) && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-paper-raised border border-line text-ink-soft tabular">{ticketLabel(c)}</span>}
-                      </div>
-                    )}
-
-                    <div className="mt-3 space-y-1.5 text-[12.5px]">
+                    <div className="mt-2.5 space-y-1 text-[12.5px]">
                       {c.email && <div className="flex items-center gap-2 text-ink-soft truncate"><Mail size={13} className="shrink-0" /> <span className="truncate">{c.email}</span></div>}
                       {c.telephone && <div className="flex items-center gap-2 text-ink-soft truncate"><Phone size={13} className="shrink-0" /> <span className="truncate">{c.telephone}</span></div>}
                       {!c.email && !c.telephone && c.adresse && <div className="flex items-center gap-2 text-ink-soft truncate"><MapPin size={13} className="shrink-0" /> <span className="truncate">{c.adresse}</span></div>}
                     </div>
 
+                    <NotesApercu c={c} className="mt-3" />
+                    <Criteres c={c} className="mt-2.5" />
+
                     <div className="mt-auto pt-3 flex items-center justify-between gap-2">
                       <span className="text-[11px] text-ink-faint">{dc ? `Dernier contact le ${formatDate(dc)}` : c.statutRelation || ''}</span>
                       <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
+                        <button onClick={() => setNoteFor(c)} className="p-1.5 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Noter un échange"><MessageSquarePlus size={14} /></button>
                         <button onClick={() => setEditing(c)} className="p-1.5 rounded-lg text-ink-faint hover:text-brass hover:bg-brass-soft" title="Modifier"><Pencil size={14} /></button>
                         <button onClick={() => removeContact(c.id)} className="p-1.5 rounded-lg text-ink-faint hover:text-rust hover:bg-rust-soft" title="Supprimer"><Trash2 size={14} /></button>
                       </div>
@@ -197,9 +239,79 @@ export default function Contacts() {
         onEdit={() => { setEditing(selected); }}
         onAsk={(prefill) => navigate('/assistant', { state: { prefill } })}
       />
+      <Modal open={Boolean(noteFor)} onClose={() => setNoteFor(null)} title={noteFor ? `Noter un échange — ${contactLabel(noteFor)}` : ''} width="max-w-xl">
+        {noteFor && <FormEchange contact={noteFor} onDone={() => setNoteFor(null)} autoFocus />}
+      </Modal>
       <ContactEditor open={editing !== null} contact={editing === 'new' ? null : editing} existingTags={tags} onClose={() => setEditing(null)} />
       <ImportWizard open={importOpen} onClose={() => setImportOpen(false)} onImport={(list) => addContactsBulk(list.map(normalizeImported))} />
     </div>
+  );
+}
+
+// Critères d'investissement en pastilles (classes d'actifs, zones, ticket).
+function Criteres({ c, className = '' }) {
+  if (!(c.classesActifs.length > 0 || c.zones.length > 0 || ticketLabel(c))) return null;
+  return (
+    <div className={`flex flex-wrap gap-1 ${className}`}>
+      {c.classesActifs.map((k) => <span key={k} className="text-[10.5px] px-1.5 py-0.5 rounded bg-brass-soft text-ink">{k}</span>)}
+      {c.zones.slice(0, 3).map((z) => <span key={z} className="text-[10.5px] px-1.5 py-0.5 rounded bg-paper-raised border border-line text-ink-soft">{z}</span>)}
+      {ticketLabel(c) && <span className="text-[10.5px] px-1.5 py-0.5 rounded bg-paper-raised border border-line text-ink-soft tabular">{ticketLabel(c)}</span>}
+    </div>
+  );
+}
+
+// Notes et derniers échanges, lisibles directement dans la liste — sans
+// ouvrir la fiche. Sur une carte, le bloc défile s'il est long ; en vue
+// Liste (`complet`), tout le texte est affiché.
+function NotesApercu({ c, complet = false, className = '' }) {
+  const echanges = [...c.interactions].filter((i) => i.note).sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+  const visibles = complet ? echanges : echanges.slice(0, 3);
+  if (!c.notes && echanges.length === 0) {
+    return <div className={`text-[12px] text-ink-faint italic ${className}`}>Aucune note pour l'instant.</div>;
+  }
+  return (
+    <div className={`rounded-lg border border-brass/30 bg-brass-soft/40 px-3 py-2 min-w-0 ${complet ? '' : 'max-h-40 overflow-y-auto overscroll-contain'} ${className}`}>
+      <div className="flex items-center gap-1.5 text-[10.5px] uppercase tracking-wide text-ink-faint mb-1"><StickyNote size={11} className="text-brass" /> Notes</div>
+      {c.notes && <div className="text-[13px] leading-relaxed text-ink whitespace-pre-wrap break-words">{c.notes}</div>}
+      {visibles.length > 0 && (
+        <ul className={`space-y-1 ${c.notes ? 'mt-2 pt-2 border-t border-brass/20' : ''}`}>
+          {visibles.map((i) => (
+            <li key={i.id} className="text-[12.5px] text-ink whitespace-pre-wrap break-words">
+              <span className="text-ink-faint">{i.date ? formatDate(i.date) : '—'} · {i.type} — </span>{i.note}
+            </li>
+          ))}
+          {!complet && echanges.length > visibles.length && <li className="text-[11.5px] text-ink-faint">+ {echanges.length - visibles.length} échange{echanges.length - visibles.length > 1 ? 's' : ''} plus ancien{echanges.length - visibles.length > 1 ? 's' : ''}</li>}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+// Saisie d'un échange (appel, rendez-vous, note…) avec relance optionnelle.
+function FormEchange({ contact, onDone, autoFocus = false }) {
+  const { updateContact } = useApp();
+  const [inter, setInter] = useState({ date: today(), type: 'Appel', note: '', relance: '' });
+  function enregistrer(e) {
+    e.preventDefault();
+    if (!inter.note.trim() && !inter.relance) return;
+    const patch = {};
+    if (inter.note.trim()) patch.interactions = [{ id: uid('inter'), date: inter.date || today(), type: inter.type, note: inter.note.trim() }, ...(contact.interactions || [])];
+    if (inter.relance) patch.prochaineRelance = inter.relance;
+    updateContact(contact.id, patch);
+    setInter({ date: today(), type: 'Appel', note: '', relance: '' });
+    onDone?.();
+  }
+  return (
+    <form onSubmit={enregistrer} className="rounded-xl border border-line bg-paper-raised p-3.5 space-y-3">
+      <div className="text-[12px] font-medium text-ink flex items-center gap-1.5"><MessageSquarePlus size={13} className="text-brass" /> Noter un échange</div>
+      <Textarea rows={3} autoFocus={autoFocus} value={inter.note} onChange={(e) => setInter({ ...inter, note: e.target.value })} placeholder="Ce qui s'est dit, ce qu'il attend, la suite à donner…" />
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        <Field label="Date"><Input type="date" value={inter.date} onChange={(e) => setInter({ ...inter, date: e.target.value })} /></Field>
+        <Field label="Type"><Select value={inter.type} onChange={(e) => setInter({ ...inter, type: e.target.value })}>{TYPES_INTERACTION.map((t) => <option key={t}>{t}</option>)}</Select></Field>
+        <Field label="Prochaine relance" hint="Optionnel"><Input type="date" value={inter.relance} onChange={(e) => setInter({ ...inter, relance: e.target.value })} /></Field>
+        <div className="flex items-end"><Button type="submit" variant="brass" className="w-full">Enregistrer</Button></div>
+      </div>
+    </form>
   );
 }
 
@@ -210,21 +322,10 @@ export default function Contacts() {
 function ContactDetail({ contact, mandats, onClose, onEdit, onAsk }) {
   const { updateContact } = useApp();
   const [tab, setTab] = useState('fiche');
-  const [inter, setInter] = useState({ date: today(), type: 'Appel', note: '', relance: '' });
   if (!contact) return null;
   const c = contact;
   const rel = relanceTone(c.prochaineRelance);
   const biens = estInvestisseur(c) ? matcherBiens(c, mandats) : [];
-
-  function ajouterInteraction(e) {
-    e.preventDefault();
-    if (!inter.note.trim() && !inter.relance) return;
-    const nouvelle = { id: uid('inter'), date: inter.date || today(), type: inter.type, note: inter.note.trim() };
-    const patch = { interactions: [nouvelle, ...(c.interactions || [])] };
-    if (inter.relance) patch.prochaineRelance = inter.relance;
-    updateContact(c.id, patch);
-    setInter({ date: today(), type: 'Appel', note: '', relance: '' });
-  }
 
   const TABS = [
     ['fiche', 'Fiche', Briefcase], ['criteres', 'Critères', Target], ['historique', `Historique${c.interactions.length ? ` (${c.interactions.length})` : ''}`, History],
@@ -292,16 +393,7 @@ function ContactDetail({ contact, mandats, onClose, onEdit, onAsk }) {
 
       {tab === 'historique' && (
         <div className="space-y-4">
-          <form onSubmit={ajouterInteraction} className="rounded-xl border border-line bg-paper-raised p-3.5 space-y-3">
-            <div className="text-[12px] font-medium text-ink flex items-center gap-1.5"><MessageSquarePlus size={13} className="text-brass" /> Noter un échange</div>
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <Field label="Date"><Input type="date" value={inter.date} onChange={(e) => setInter({ ...inter, date: e.target.value })} /></Field>
-              <Field label="Type"><Select value={inter.type} onChange={(e) => setInter({ ...inter, type: e.target.value })}>{TYPES_INTERACTION.map((t) => <option key={t}>{t}</option>)}</Select></Field>
-              <Field label="Prochaine relance" hint="Optionnel"><Input type="date" value={inter.relance} onChange={(e) => setInter({ ...inter, relance: e.target.value })} /></Field>
-              <div className="flex items-end"><Button type="submit" variant="brass" className="w-full">Enregistrer</Button></div>
-            </div>
-            <Textarea rows={2} value={inter.note} onChange={(e) => setInter({ ...inter, note: e.target.value })} placeholder="Ce qui s'est dit, ce qu'il attend, la suite à donner…" />
-          </form>
+          <FormEchange contact={c} />
           {c.interactions.length === 0 ? (
             <p className="text-[12.5px] text-ink-faint">Aucun échange noté pour l'instant.</p>
           ) : (
